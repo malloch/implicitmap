@@ -71,6 +71,8 @@ typedef struct _mapper
     int input_index;
     int output_index;
     int ready;
+    int mute;
+    int snapshot_ready;
     t_atom buffer[MAX_LIST];
 } t_mapper;
 
@@ -83,18 +85,18 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv);
 void mapper_free(t_mapper *x);
 void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
 void mapper_poll(t_mapper *x);
-void mapper_mute(t_mapper *x);
+void mapper_mute(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
 void mapper_float_handler(mapper_signal msig, void *v);
 void mapper_int_handler(mapper_signal msig, void *v);
 void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void *user);
 void mapper_print_properties(t_mapper *x);
 int mapper_setup_mapper(t_mapper *x);
+void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv);   
 #ifdef MAXMSP
     void mapper_assist(t_mapper *x, void *b, long m, long a, char *s);
-    void mapper_snapshot(t_mapper *x, long index);
-#else
-    void mapper_snapshot(t_mapper *x, int index);
 #endif
+void add_input(t_mapper *x);
+void add_output(t_mapper *x);
 static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
@@ -110,10 +112,10 @@ int main(void)
         c = class_new("implicitmap", (method)mapper_new, (method)mapper_free, 
                       (long)sizeof(t_mapper), 0L, A_GIMME, 0);
         class_addmethod(c, (method)mapper_assist,         "assist",   A_CANT,     0);
-        class_addmethod(c, (method)mapper_snapshot,       "snapshot", A_LONG,     0);
-        class_addmethod(c, (method)mapper_mute,           "mute",     A_CANT,     0);
+        class_addmethod(c, (method)mapper_snapshot,       "snapshot", A_GIMME,    0);
+        class_addmethod(c, (method)mapper_mute,           "mute",     A_GIMME,    0);
         class_addmethod(c, (method)mapper_anything,       "anything", A_GIMME,    0);
-        class_register(CLASS_BOX, c); /* CLASS_NOBOX */
+         class_register(CLASS_BOX, c); /* CLASS_NOBOX */
         mapper_class = c;
         ps_list = gensym("list");
         return 0;
@@ -182,14 +184,14 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
         }
         else {
             x->ready = 0;
+            x->mute = 0;
+            x->snapshot_ready = 1;
             x->input_index = 0;
             x->output_index = 0;
-            char name[10];
-            snprintf(name, 10, "%s%i", "/", x->input_index++);
-            mdev_add_input(x->device, name, 1, 'f', 0, 0, 0, mapper_float_handler, x);
-            snprintf(name, 10, "%s%i", "/", x->output_index++);
-            mdev_add_output(x->device, name, 1, 'f', 0, 0, 0);            
-             
+            for (i = 0; i < 5; i++) {
+                add_input(x);
+                add_output(x);
+            }
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)mapper_poll);    // Create the timing clock
 #else
@@ -305,20 +307,38 @@ void mapper_assist(t_mapper *x, void *b, long m, long a, char *s)
 
 // *********************************************************
 // -(snapshot)----------------------------------------------
-#ifdef MAXMSP
-void mapper_snapshot(t_mapper *x, long index)
-#else
-void mapper_snapshot(t_mapper *x, int index)
-#endif
+void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 {
-    post("snapshot!");
+    int snapshot_index;
+    if (!argc)
+        return;
+    if (argv->a_type != A_LONG)
+        return;
+    
+    snapshot_index = atom_getlong(argv);
+    post("snapshot %i", snapshot_index);
+    
+    // if previous snapshot still in progress, output current snapshot status
+    if (!x->snapshot_ready) {
+        post("still waiting for last snapshot");
+        return;
+    }
+    
+    // for each input, store the value. Assume scalars for now
+    
+    // for each output, query the remote values
 }
     
 // *********************************************************
 // -(mute)--------------------------------------------------
-void mapper_mute(t_mapper *x)
+void mapper_mute(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 {
-    post("mute!");
+    if (argc) {
+        if (argv->a_type ==  A_LONG) {
+            x->mute = atom_getlong(argv);
+            post("mute = %i", x->mute);
+        }
+    }
 }
 
 // *********************************************************
@@ -327,7 +347,7 @@ void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 {
     int i;
     
-    if (argc) {
+    if (!x->mute && argc) {
         //find signal
         mapper_signal msig;
         if (!(msig=mdev_get_output_by_name(x->device, s->s_name, 0)))
@@ -426,28 +446,62 @@ void mapper_float_handler(mapper_signal msig, void *v)
     outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
 #endif
 }
+    
+// *********************************************************
+// -(query handler)-----------------------------------------
+void mapper_query_handler(mapper_signal remote_sig, void *v)
+{
+    //mapper_db_signal props = msig_properties(msig);
+    //int index = (int) (props->user_data);
+    //printf("--> source got query response: /in%i %f\n", index, (*(float*)v));
+    
+    mapper_db_signal props_remote = msig_properties(remote_sig);
+    mapper_signal local_sig = props_remote->user_data;
+    mapper_db_signal props_local = msig_properties(local_sig);
+    t_mapper *x = props_local->user_data;
+    int i, length = props_remote->length;
+    float *pf = (float*)v;
+    
+    if (length > (MAX_LIST-1)) {
+        post("Maximum list length is %i!", MAX_LIST-1);
+        length = MAX_LIST-1;
+    }
+    
+#ifdef MAXMSP
+    atom_setsym(x->buffer, gensym((char *)props_local->name));
+    for (i = 0; i < length; i++) {
+        atom_setfloat(x->buffer + i + 1, *(pf+i));
+    }
+    outlet_list(x->outlet1, ps_list, length+1, x->buffer);
+#else
+    for (i = 0; i < length; i++) {
+        SETFLOAT(x->buffer + i, *(pf+i));
+    }
+    outlet_anything(x->outlet1, gensym((char *)props_local->name), length, x->buffer);
+#endif
+}
 
 // *********************************************************
 // -(connection handler)---------------------------------------
 void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void *user)
 {
     t_mapper *x = user;
+    if (!x) {
+        post("error in connection_handler: user_data is NULL");
+        return;
+    }
     post("Connection %s -> %s ", map->src_name, map->dest_name);
     switch (a) {
         case MDB_NEW:
             // check if applies to me
-            //if (osc_prefix_cmp(map->src_name, mapper_admin_name(x->device->mapper_admin), 0)) {
+            if (osc_prefix_cmp(map->src_name, mdev_name(x->device), 0) == 0) {
                 post("I am the source! Create a new output signal!");
-                //char name[10];
-                //snprintf(name, 10, "%s%i", "/", x->output_index++);
-                //mdev_add_output(x->device, name, 1, 'f', 0, 0, 0);
-            //}
-            //else if (strcmp(map->dest_name, mdev_name(x->device)) == 0) {
-                //post("I am the destination! Create a new input signal!");
-                //char name[10];
-                //snprintf(name, 10, "%s%i", "/", x->input_index++);
-                //mdev_add_input(x->device, name, 1, 'f', 0, 0, 0, mapper_float_handler, x);
-            //}
+                //add_output(x);
+            }
+            else if (osc_prefix_cmp(map->dest_name, mdev_name(x->device), 0) == 0) {
+                post("I am the destination! Create a new input signal!");
+                //add_input(x);
+            }
             break;
         case MDB_MODIFY:
             break;
@@ -497,6 +551,24 @@ void mapper_poll(t_mapper *x)
     }
     clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
 }
+    
+void add_input(t_mapper *x)
+{
+    int *user = (int *) x->input_index;
+    char name[10];
+    snprintf(name, 10, "%s%i", "/in", x->input_index);
+    mapper_signal temp = mdev_add_input(x->device, name, 1, 'f', 0, 0, 0, mapper_float_handler, x);
+    snprintf(name, 10, "%s%i", "/#in", x->input_index);
+    mdev_add_hidden_input(x->device, name, 1, 'f', 0, 0, 0, mapper_query_handler, &temp);
+    x->input_index++;
+}
+
+void add_output(t_mapper *x)
+{
+    char name[10];
+    snprintf(name, 10, "%s%i", "/out", x->output_index++);
+    mdev_add_output(x->device, name, 1, 'f', 0, 0, 0); 
+}
 
 /* Helper function to check if the OSC prefix matches.  Like strcmp(),
  * returns 0 if they match (up to the second '/'), non-0 otherwise.
@@ -506,11 +578,11 @@ static int osc_prefix_cmp(const char *str1, const char *str2,
                           const char **rest)
 {
     if (str1[0]!='/') {
-        trace("OSC string '%s' does not start with '/'.\n", str1);
+        //trace("OSC string '%s' does not start with '/'.\n", str1);
         return 0;
     }
     if (str2[0]!='/') {
-        trace("OSC string '%s' does not start with '/'.\n", str2);
+        //trace("OSC string '%s' does not start with '/'.\n", str2);
         return 0;
     }
     

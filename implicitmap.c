@@ -66,8 +66,8 @@ typedef struct _mapper
     void *clock;          // pointer to clock object
     char name[128];
     mapper_device device;
-    mapper_monitor monitor;
-    mapper_db db;
+    //mapper_monitor monitor;
+    //mapper_db db;
     int input_index;
     int output_index;
     int ready;
@@ -213,12 +213,14 @@ void mapper_free(t_mapper *x)
     if (x->device) {
         post("Freeing device %s...", mdev_name(x->device));
         mdev_free(x->device);
+        post("ok");
     }
-    mapper_db_remove_mapping_callback(x->db, mapper_connection_handler, x);
-    if (x->monitor) {
-        post("Freeing monitor...");
-        mapper_monitor_free(x->monitor);
-    }
+    //mapper_db_remove_mapping_callback(x->db, mapper_connection_handler, x);
+    //if (x->monitor) {
+    //    post("Freeing monitor...");
+    //    mapper_monitor_free(x->monitor);
+    //    post("ok");
+    //}
 }
 
 // *********************************************************
@@ -325,7 +327,7 @@ void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
     }
     
     // for each input, store the value. Assume scalars for now
-    
+    add_input(x);
     // for each output, query the remote values
 }
     
@@ -515,24 +517,23 @@ void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void
 int mapper_setup_mapper(t_mapper *x)
 {
     post("using name: %s", x->name);
+    x->device = 0;
+    //x->monitor = 0;
     
     x->device = mdev_new(x->name, port, 0);
-
     if (!x->device)
         return 1;
-    else
-        mapper_print_properties(x);
     
-    x->monitor = mapper_monitor_new();
-    if (!x->monitor) {
-        return 1;
-    }
+    //x->monitor = mapper_monitor_new();
+    //if (!x->monitor)
+    //    return 1;
     
-    x->db = mapper_monitor_get_db(x->monitor);
+    //x->db = mapper_monitor_get_db(x->monitor);
     
-    mapper_db_add_mapping_callback(x->db, mapper_connection_handler, x);
+    //mapper_db_add_mapping_callback(x->db, mapper_connection_handler, x);
     
     post("initialization ok");
+    mapper_print_properties(x);
     
     return 0;
 }
@@ -542,7 +543,7 @@ int mapper_setup_mapper(t_mapper *x)
 void mapper_poll(t_mapper *x)
 {    
     mdev_poll(x->device, 0);
-    mapper_monitor_poll(x->monitor, 0);
+    //mapper_monitor_poll(x->monitor, 0);
     if (!x->ready) {
         if (mdev_ready(x->device)) {
             x->ready = 1;
@@ -554,12 +555,11 @@ void mapper_poll(t_mapper *x)
     
 void add_input(t_mapper *x)
 {
-    int *user = (int *) x->input_index;
     char name[10];
     snprintf(name, 10, "%s%i", "/in", x->input_index);
     mapper_signal temp = mdev_add_input(x->device, name, 1, 'f', 0, 0, 0, mapper_float_handler, x);
-    snprintf(name, 10, "%s%i", "/#in", x->input_index);
-    mdev_add_hidden_input(x->device, name, 1, 'f', 0, 0, 0, mapper_query_handler, &temp);
+    //snprintf(name, 10, "%s%i", "/#in", x->input_index);
+    //mdev_add_hidden_input(x->device, name, 1, 'f', 0, 0, 0, mapper_query_handler, &temp);
     x->input_index++;
 }
 

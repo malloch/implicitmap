@@ -66,10 +66,13 @@ typedef struct _mapper
     void *clock;          // pointer to clock object
     char name[128];
     mapper_device device;
-    //mapper_monitor monitor;
-    //mapper_db db;
-    int input_index;
-    int output_index;
+    mapper_monitor monitor;
+    mapper_db db;
+    mapper_signal inputs[MAX_LIST];
+    mapper_signal outputs[MAX_LIST];
+    mapper_signal hidden[MAX_LIST];
+    int n_in;
+    int n_out;
     int ready;
     int mute;
     int snapshot_ready;
@@ -186,12 +189,10 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
             x->ready = 0;
             x->mute = 0;
             x->snapshot_ready = 1;
-            x->input_index = 0;
-            x->output_index = 0;
-            for (i = 0; i < 5; i++) {
-                add_input(x);
-                add_output(x);
-            }
+            x->n_in = 0;
+            x->n_out = 0;
+            add_input(x);
+            add_output(x);
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)mapper_poll);    // Create the timing clock
 #else
@@ -215,12 +216,14 @@ void mapper_free(t_mapper *x)
         mdev_free(x->device);
         post("ok");
     }
-    //mapper_db_remove_mapping_callback(x->db, mapper_connection_handler, x);
-    //if (x->monitor) {
-    //    post("Freeing monitor...");
-    //    mapper_monitor_free(x->monitor);
-    //    post("ok");
-    //}
+    if (x->db) {
+        mapper_db_remove_mapping_callback(x->db, mapper_connection_handler, x);
+    }
+    if (x->monitor) {
+        post("Freeing monitor...");
+        mapper_monitor_free(x->monitor);
+        post("ok");
+    }
 }
 
 // *********************************************************
@@ -269,7 +272,7 @@ void mapper_print_properties(t_mapper *x)
         atom_setlong(x->buffer + 1, mdev_num_inputs(x->device));
         outlet_list(x->outlet2, ps_list, 2, x->buffer);
 #else
-        SETFLOAT(x->buffer, (float)mdev_num_inputs(x->device));
+        SETFLOAT(x->buffer, (float)mdev_n_inputs(x->device));
         outlet_anything(x->outlet2, gensym("numInputs"), 1, x->buffer);
 #endif
         
@@ -311,7 +314,7 @@ void mapper_assist(t_mapper *x, void *b, long m, long a, char *s)
 // -(snapshot)----------------------------------------------
 void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 {
-    int snapshot_index;
+    int i, snapshot_index;
     if (!argc)
         return;
     if (argv->a_type != A_LONG)
@@ -327,8 +330,11 @@ void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
     }
     
     // for each input, store the value. Assume scalars for now
-    add_input(x);
+    
     // for each output, query the remote values
+    for (i = 0; i < x->n_out; i++) {
+        msig_query_remote(x->outputs[i], x->hidden[i]);
+    }
 }
     
 // *********************************************************
@@ -453,14 +459,18 @@ void mapper_float_handler(mapper_signal msig, void *v)
 // -(query handler)-----------------------------------------
 void mapper_query_handler(mapper_signal remote_sig, void *v)
 {
-    //mapper_db_signal props = msig_properties(msig);
-    //int index = (int) (props->user_data);
-    //printf("--> source got query response: /in%i %f\n", index, (*(float*)v));
-    
     mapper_db_signal props_remote = msig_properties(remote_sig);
     mapper_signal local_sig = props_remote->user_data;
+    if (!local_sig) {
+        post("error in query_handler: user_data is NULL");
+        return;
+    }
     mapper_db_signal props_local = msig_properties(local_sig);
     t_mapper *x = props_local->user_data;
+    if (!props_local) {
+        post("error in query_handler: user_data is NULL");
+        return;
+    }
     int i, length = props_remote->length;
     float *pf = (float*)v;
     
@@ -479,7 +489,7 @@ void mapper_query_handler(mapper_signal remote_sig, void *v)
     for (i = 0; i < length; i++) {
         SETFLOAT(x->buffer + i, *(pf+i));
     }
-    outlet_anything(x->outlet1, gensym((char *)props_local->name), length, x->buffer);
+    outlet_anything(x->outlet2, gensym((char *)props_local->name), length, x->buffer);
 #endif
 }
 
@@ -492,17 +502,14 @@ void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void
         post("error in connection_handler: user_data is NULL");
         return;
     }
-    post("Connection %s -> %s ", map->src_name, map->dest_name);
     switch (a) {
         case MDB_NEW:
             // check if applies to me
             if (osc_prefix_cmp(map->src_name, mdev_name(x->device), 0) == 0) {
-                post("I am the source! Create a new output signal!");
-                //add_output(x);
+                add_output(x);
             }
             else if (osc_prefix_cmp(map->dest_name, mdev_name(x->device), 0) == 0) {
-                post("I am the destination! Create a new input signal!");
-                //add_input(x);
+                add_input(x);
             }
             break;
         case MDB_MODIFY:
@@ -518,21 +525,20 @@ int mapper_setup_mapper(t_mapper *x)
 {
     post("using name: %s", x->name);
     x->device = 0;
-    //x->monitor = 0;
+    x->monitor = 0;
+    x->db = 0;
     
     x->device = mdev_new(x->name, port, 0);
     if (!x->device)
         return 1;
     
-    //x->monitor = mapper_monitor_new();
-    //if (!x->monitor)
-    //    return 1;
+    x->monitor = mapper_monitor_new();
+    if (!x->monitor)
+        return 1;
     
-    //x->db = mapper_monitor_get_db(x->monitor);
+    x->db = mapper_monitor_get_db(x->monitor);
+    mapper_db_add_mapping_callback(x->db, mapper_connection_handler, x);
     
-    //mapper_db_add_mapping_callback(x->db, mapper_connection_handler, x);
-    
-    post("initialization ok");
     mapper_print_properties(x);
     
     return 0;
@@ -543,7 +549,7 @@ int mapper_setup_mapper(t_mapper *x)
 void mapper_poll(t_mapper *x)
 {    
     mdev_poll(x->device, 0);
-    //mapper_monitor_poll(x->monitor, 0);
+    mapper_monitor_poll(x->monitor, 0);
     if (!x->ready) {
         if (mdev_ready(x->device)) {
             x->ready = 1;
@@ -552,22 +558,35 @@ void mapper_poll(t_mapper *x)
     }
     clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
 }
-    
+
+// *********************************************************
+// -(add input signal)--------------------------------------
 void add_input(t_mapper *x)
 {
     char name[10];
-    snprintf(name, 10, "%s%i", "/in", x->input_index);
-    mapper_signal temp = mdev_add_input(x->device, name, 1, 'f', 0, 0, 0, mapper_float_handler, x);
-    //snprintf(name, 10, "%s%i", "/#in", x->input_index);
-    //mdev_add_hidden_input(x->device, name, 1, 'f', 0, 0, 0, mapper_query_handler, &temp);
-    x->input_index++;
+    snprintf(name, 10, "%s%i", "/in", x->n_in);
+    x->inputs[x->n_in] = mdev_add_input(x->device, name,
+                                        1, 'f', 0, 0, 0,
+                                        mapper_float_handler, x);
+    x->n_in ++;
 }
 
+// *********************************************************
+// -(add output signal)-------------------------------------
 void add_output(t_mapper *x)
 {
-    char name[10];
-    snprintf(name, 10, "%s%i", "/out", x->output_index++);
-    mdev_add_output(x->device, name, 1, 'f', 0, 0, 0); 
+    char name[20];
+    snprintf(name, 20, "%s%i", "/out", x->n_out);
+    x->outputs[x->n_out] = mdev_add_output(x->device, name,
+                                               1, 'f', 0, 0, 0);
+    mapper_db_signal props = msig_properties(x->outputs[x->n_out]);
+    props->user_data = x;
+    snprintf(name, 20, "%s%i", "/hidden", x->n_out);
+    x->hidden[x->n_out] = mdev_add_hidden_input(x->device, name,
+                                                1, 'f', 0, 0, 0,
+                                                mapper_query_handler, 
+                                                x->outputs[x->n_out]);
+    x->n_out ++;
 }
 
 /* Helper function to check if the OSC prefix matches.  Like strcmp(),

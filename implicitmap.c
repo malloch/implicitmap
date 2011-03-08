@@ -122,7 +122,8 @@ int main(void)
         class_addmethod(c, (method)mapper_snapshot,       "snapshot", A_GIMME,    0);
         class_addmethod(c, (method)mapper_mute,           "mute",     A_GIMME,    0);
         class_addmethod(c, (method)mapper_anything,       "anything", A_GIMME,    0);
-         class_register(CLASS_BOX, c); /* CLASS_NOBOX */
+        class_addmethod(c, (method)mapper_print_properties, "print",  A_GIMME,    0);
+        class_register(CLASS_BOX, c); /* CLASS_NOBOX */
         mapper_class = c;
         ps_list = gensym("list");
         return 0;
@@ -135,6 +136,7 @@ int main(void)
                       (long)sizeof(t_mapper), 0L, A_GIMME, 0);        
         class_addmethod(c,   (t_method)mapper_snapshot, gensym("snapshot"), A_GIMME, 0);
         class_addmethod(c,   (t_method)mapper_mute,     gensym("mute"),     A_GIMME, 0);
+        class_addmethod(c,   (t_method)mapper_print_properties, gensym("print"), A_GIMME, 0);
         class_addanything(c, (t_method)mapper_anything);
         mapper_class = c;
         ps_list = gensym("list");
@@ -354,7 +356,7 @@ void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
     x->snapshot_ready = 0;
     
     // for each input, store the value. Assume scalars for now
-    for (i = 0; i < x->n_in; i++) {
+    for (i = 0; i < x->n_in - 1; i++) {
         mapper_signal_value_t *value = msig_value(x->inputs[i]);
         // check if signal has a value
         if (value) {
@@ -388,7 +390,7 @@ void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 #endif
     
     // for each output, query the remote values
-    for (i = 0; i < x->n_out; i++) {
+    for (i = 0; i < x->n_out - 1; i++) {
         msig_query_remote(x->outputs[i], x->hidden[i]);
     }
 }
@@ -520,6 +522,7 @@ void mapper_float_handler(mapper_signal msig, int has_value)
 void mapper_query_handler(mapper_signal remote_sig, int has_value)
 {
     int i;
+    mapper_db_signal temp_props;
     mapper_db_signal remote_props = msig_properties(remote_sig);
     mapper_signal local_sig = remote_props->user_data;
 
@@ -531,7 +534,8 @@ void mapper_query_handler(mapper_signal remote_sig, int has_value)
     }
     // find output signal in array
     for (i = 0; i < x->n_out; i++) {
-        if (&local_sig == &x->outputs[i])
+        temp_props = msig_properties(x->outputs[i]);
+        if (strcmp(temp_props->name, local_props->name) == 0)
             break;
     }
     if (i == x->n_out) {

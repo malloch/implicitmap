@@ -73,8 +73,11 @@ typedef struct _mapper
     mapper_signal hidden[MAX_LIST];
     int n_in;
     int n_out;
+    int count_in;
+    int count_out;
     int ready;
     int mute;
+    t_atom snapshot_out[MAX_LIST];
     int snapshot_ready;
     t_atom buffer[MAX_LIST];
 } t_mapper;
@@ -89,8 +92,9 @@ void mapper_free(t_mapper *x);
 void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
 void mapper_poll(t_mapper *x);
 void mapper_mute(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
-void mapper_float_handler(mapper_signal msig, void *v);
-void mapper_int_handler(mapper_signal msig, void *v);
+void mapper_float_handler(mapper_signal msig, int has_value);
+void mapper_int_handler(mapper_signal msig, int has_value);
+void mapper_query_handler(mapper_signal msig, int has_value);
 void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void *user);
 void mapper_print_properties(t_mapper *x);
 int mapper_setup_mapper(t_mapper *x);
@@ -195,8 +199,10 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
             add_output(x);
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)mapper_poll);    // Create the timing clock
+            atom_setsym(x->snapshot_out, gensym("out"));
 #else
             x->clock = clock_new(x, (t_method)mapper_poll);
+            SETSYMBOL(x->snapshot_out, gensym("out"));
 #endif
             clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
         }
@@ -237,6 +243,17 @@ void mapper_print_properties(t_mapper *x)
         message = strdup(mdev_name(x->device));
 #ifdef MAXMSP
         atom_setsym(x->buffer, gensym("name"));
+        atom_setsym(x->buffer + 1, gensym(message));
+        outlet_list(x->outlet2, ps_list, 2, x->buffer);
+#else
+        SETSYMBOL(x->buffer, gensym(message));
+        outlet_anything(x->outlet2, gensym("name"), 1, x->buffer);
+#endif
+        
+        //output interface
+        message = strdup(mdev_interface(x->device));
+#ifdef MAXMSP
+        atom_setsym(x->buffer, gensym("interface"));
         atom_setsym(x->buffer + 1, gensym(message));
         outlet_list(x->outlet2, ps_list, 2, x->buffer);
 #else
@@ -319,17 +336,56 @@ void mapper_snapshot(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
         return;
     if (argv->a_type != A_LONG)
         return;
-    
-    snapshot_index = atom_getlong(argv);
-    post("snapshot %i", snapshot_index);
-    
     // if previous snapshot still in progress, output current snapshot status
     if (!x->snapshot_ready) {
         post("still waiting for last snapshot");
         return;
     }
+    if (!x->n_in || !x->n_out) {
+        post("no signals mapped!");
+        return;
+    }
+    
+    snapshot_index = atom_getlong(argv);
+    post("snapshot %i", snapshot_index);
+    
+    x->count_in = 0;
+    x->count_out = 0;
+    x->snapshot_ready = 0;
     
     // for each input, store the value. Assume scalars for now
+    for (i = 0; i < x->n_in; i++) {
+        mapper_signal_value_t *value = msig_value(x->inputs[i]);
+        // check if signal has a value
+        if (value) {
+            mapper_db_signal props = msig_properties(x->inputs[i]);
+#ifdef MAXMSP
+            if (props->type == 'i')
+                atom_setlong(x->buffer + i + 1, (long)value->i32);
+            else if (props->type == 'f')
+                atom_setfloat(x->buffer + i + 1, value->f);
+#else
+            if (props->type == 'i')
+                SETFLOAT(x->buffer + i + 1, (float)value->i32);
+            else if (props->type == 'f')
+                SETFLOAT(x->buffer + i + 1, value->f);
+#endif
+        }
+        else {
+            // set to zero for now
+#ifdef MAXMSP
+            atom_setfloat(x->buffer + i + 1, 0);
+#else
+            SETFLOAT(x->buffer + i + 1, 0);
+#endif
+        }
+    }
+#ifdef MAXMSP
+    atom_setsym(x->buffer, gensym("in"));
+    outlet_list(x->outlet2, ps_list, x->n_in + 1, x->buffer);
+#else
+    outlet_anything(x->outlet2, gensym("in"), x->n_in, x->buffer + 1);
+#endif
     
     // for each output, query the remote values
     for (i = 0; i < x->n_out; i++) {
@@ -401,96 +457,123 @@ void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 
 // *********************************************************
 // -(int handler)-------------------------------------------
-void mapper_int_handler(mapper_signal msig, void *v)
+void mapper_int_handler(mapper_signal msig, int has_value)
 {
-    mapper_db_signal props = msig_properties(msig);
-    t_mapper *x = props->user_data;
-    int i, length = props->length;
-    int *pi = (int*)v;
-    
-    if (length > (MAX_LIST-1)) {
-        post("Maximum list length is %i!", MAX_LIST-1);
-        length = MAX_LIST-1;
-    }
+    if (has_value) {
+        mapper_db_signal props = msig_properties(msig);
+        t_mapper *x = props->user_data;
+        int i, length = props->length;
+        mapper_signal_value_t *value = msig_value(msig);
+        
+        if (length > (MAX_LIST-1)) {
+            post("Maximum list length is %i!", MAX_LIST-1);
+            length = MAX_LIST-1;
+        }
 
 #ifdef MAXMSP
-    atom_setsym(x->buffer, gensym((char *)props->name));
-    for (i = 0; i < length; i++) {
-        atom_setlong(x->buffer + i + 1, (long)*(pi+i));
-    }
-    outlet_list(x->outlet1, ps_list, length+1, x->buffer);
+        atom_setsym(x->buffer, gensym((char *)props->name));
+        for (i = 0; i < length; i++) {
+            atom_setlong(x->buffer + i + 1, (long)(value+1)->i32);
+        }
+        outlet_list(x->outlet1, ps_list, length+1, x->buffer);
 #else
-    for (i = 0; i < length; i++) {
-        SETFLOAT(x->buffer + i, (float)*(pi+i));
-    }
-    outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
+        for (i = 0; i < length; i++) {
+            SETFLOAT(x->buffer + i, (float)(value+i)->i32);
+        }
+        outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
 #endif
+    }
 }
 
 // *********************************************************
 // -(float handler)-----------------------------------------
-void mapper_float_handler(mapper_signal msig, void *v)
+void mapper_float_handler(mapper_signal msig, int has_value)
 {
-    mapper_db_signal props = msig_properties(msig);
-    t_mapper *x = props->user_data;
-    int i, length = props->length;
-    float *pf = (float*)v;
-    
-    if (length > (MAX_LIST-1)) {
-        post("Maximum list length is %i!", MAX_LIST-1);
-        length = MAX_LIST-1;
-    }
-    
+    if (has_value) {
+        mapper_db_signal props = msig_properties(msig);
+        t_mapper *x = props->user_data;
+        int i, length = props->length;
+        mapper_signal_value_t *value = msig_value(msig);
+        
+        if (length > (MAX_LIST-1)) {
+            post("Maximum list length is %i!", MAX_LIST-1);
+            length = MAX_LIST-1;
+        }
+        
 #ifdef MAXMSP
-    atom_setsym(x->buffer, gensym((char *)props->name));
-    for (i = 0; i < length; i++) {
-        atom_setfloat(x->buffer + i + 1, *(pf+i));
-    }
-    outlet_list(x->outlet1, ps_list, length+1, x->buffer);
+        atom_setsym(x->buffer, gensym((char *)props->name));
+        for (i = 0; i < length; i++) {
+            atom_setfloat(x->buffer + i + 1, (value+1)->f);
+        }
+        outlet_list(x->outlet1, ps_list, length+1, x->buffer);
 #else
-    for (i = 0; i < length; i++) {
-        SETFLOAT(x->buffer + i, *(pf+i));
-    }
-    outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
+        for (i = 0; i < length; i++) {
+            SETFLOAT(x->buffer + i, (value+i)->f);
+        }
+        outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
 #endif
+    }
 }
     
 // *********************************************************
 // -(query handler)-----------------------------------------
-void mapper_query_handler(mapper_signal remote_sig, void *v)
+void mapper_query_handler(mapper_signal remote_sig, int has_value)
 {
-    mapper_db_signal props_remote = msig_properties(remote_sig);
-    mapper_signal local_sig = props_remote->user_data;
-    if (!local_sig) {
+    int i;
+    mapper_db_signal remote_props = msig_properties(remote_sig);
+    mapper_signal local_sig = remote_props->user_data;
+
+    mapper_db_signal local_props = msig_properties(local_sig);
+    t_mapper *x = local_props->user_data;
+    if (!local_props) {
         post("error in query_handler: user_data is NULL");
         return;
     }
-    mapper_db_signal props_local = msig_properties(local_sig);
-    t_mapper *x = props_local->user_data;
-    if (!props_local) {
-        post("error in query_handler: user_data is NULL");
+    // find output signal in array
+    for (i = 0; i < x->n_out; i++) {
+        if (&local_sig == &x->outputs[i])
+            break;
+    }
+    if (i == x->n_out) {
+        post("error in query handler: could not find output signal");
         return;
     }
-    int i, length = props_remote->length;
-    float *pf = (float*)v;
+    post("query response: %s", local_props->name);
     
-    if (length > (MAX_LIST-1)) {
-        post("Maximum list length is %i!", MAX_LIST-1);
-        length = MAX_LIST-1;
-    }
-    
+    //int length = remote_props->length;
+    if (has_value) {
+        mapper_signal_value_t *value = msig_value(remote_sig);
 #ifdef MAXMSP
-    atom_setsym(x->buffer, gensym((char *)props_local->name));
-    for (i = 0; i < length; i++) {
-        atom_setfloat(x->buffer + i + 1, *(pf+i));
-    }
-    outlet_list(x->outlet1, ps_list, length+1, x->buffer);
+        if (remote_props->type == 'i')
+            atom_setlong(x->snapshot_out + i + 1, (long)value->i32);
+        else if (remote_props->type == 'f')
+            atom_setfloat(x->snapshot_out + i + 1, value->f);
 #else
-    for (i = 0; i < length; i++) {
-        SETFLOAT(x->buffer + i, *(pf+i));
-    }
-    outlet_anything(x->outlet2, gensym((char *)props_local->name), length, x->buffer);
+        if (remote_props->type == 'i')
+            SETFLOAT(x->snapshot_out + i + 1, (float)value->i32);
+        else if (remote_props->type == 'f')
+            SETFLOAT(x->snapshot_out + i + 1, value->f);
 #endif
+    }
+    else {
+        // remote has no value, set to 0 for now
+#ifdef MAXMSP
+        atom_setfloat(x->buffer + i + 1, 0);
+#else
+        SETFLOAT(x->buffer + i + 1, 0);
+#endif
+    }
+
+    x->count_out ++;
+    
+    if (x->count_out == x->n_out) {
+#ifdef MAXMSP
+        outlet_list(x->outlet1, ps_list, x->n_out + 1, x->snapshot_out);
+#else
+        outlet_anything(x->outlet2, gensym("out"), x->n_out, x->snapshot_out + 1);
+#endif
+    }
+    x->snapshot_ready = 1;
 }
 
 // *********************************************************

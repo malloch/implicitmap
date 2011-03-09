@@ -590,6 +590,12 @@ void mapper_query_handler(mapper_signal remote_sig, int has_value)
 // -(connection handler)---------------------------------------
 void mapper_connection_handler(mapper_db_mapping map, mapper_db_action_t a, void *user)
 {
+    // TO DO:
+    // if connection to generic input OR full signal name doesn't match:
+    //      - learn remote signal properties
+    //      - create matching signal
+    //      - create bypass mapping between remote and new signal
+    //      - remove old mapping
     t_mapper *x = user;
     if (!x) {
         post("error in connection_handler: user_data is NULL");

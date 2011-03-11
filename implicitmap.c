@@ -69,18 +69,11 @@ typedef struct _mapper
     mapper_monitor monitor;
     lo_address address;
     mapper_db db;
-    mapper_signal inputs[MAX_LIST];
-    mapper_signal outputs[MAX_LIST];
-    mapper_signal hidden[MAX_LIST];
-    int n_in;
-    int n_out;
-    int count_in;
-    int count_out;
     int ready;
     int mute;
-    t_atom snapshot_in[MAX_LIST];
-    t_atom snapshot_out[MAX_LIST];
-    int snapshot_ready;
+    t_atom snapshot[MAX_LIST];
+    int snapshot_size;
+    int snapshot_count;
     t_atom buffer[MAX_LIST];
 } t_mapper;
 
@@ -107,6 +100,7 @@ void mapper_snapshot(t_mapper *x);
 void add_input(t_mapper *x);
 void add_output(t_mapper *x);
 static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
+int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
@@ -197,17 +191,11 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
         else {
             x->ready = 0;
             x->mute = 0;
-            x->snapshot_ready = 1;
-            x->n_in = 0;
-            x->n_out = 0;
+            x->snapshot_count = 0;
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)mapper_poll);    // Create the timing clock
-            atom_setsym(x->snapshot_in, gensym("in"));
-            atom_setsym(x->snapshot_out, gensym("out"));
 #else
             x->clock = clock_new(x, (t_method)mapper_poll);
-            SETSYMBOL(x->snapshot_in, gensym("in"));
-            SETSYMBOL(x->snapshot_out, gensym("out"));
 #endif
             clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
         }
@@ -339,52 +327,28 @@ void mapper_assist(t_mapper *x, void *b, long m, long a, char *s)
 // -(snapshot)----------------------------------------------
 void mapper_snapshot(t_mapper *x)
 {
-    int i;
     // if previous snapshot still in progress, output current snapshot status
-    if (!x->snapshot_ready) {
+    if (x->snapshot_count) {
         post("still waiting for last snapshot");
         return;
     }
-    if (!x->n_in || !x->n_out) {
-        post("no signals mapped!");
-        return;
-    }
     
-    x->count_in = 0;
-    x->count_out = 0;
-    x->snapshot_ready = 0;
+    int i;
+    mapper_signal *psig;
     
-    // for each input, store the value. Assume scalars for now
-    for (i = 0; i < x->n_in; i++) {
-        mapper_signal_value_t *value = msig_value(x->inputs[i]);
-        // check if signal has a value
-        if (value) {
-            mapper_db_signal props = msig_properties(x->inputs[i]);
-#ifdef MAXMSP
-            if (props->type == 'i')
-                atom_setlong(x->snapshot_in + i + 1, (long)value->i32);
-            else if (props->type == 'f')
-                atom_setfloat(x->snapshot_in + i + 1, value->f);
-#else
-            if (props->type == 'i')
-                SETFLOAT(x->snapshot_in + i + 1, (float)value->i32);
-            else if (props->type == 'f')
-                SETFLOAT(x->snapshot_in + i + 1, value->f);
-#endif
+    // iterate through input signals: hidden inputs correspond to 
+    // outputs/remote inputs - we need to query the remote end
+    psig = mdev_get_inputs(x->device);
+    for (i = 0; i < mdev_num_inputs(x->device); i++) {
+        //mapper_signal_value_t *value = msig_value(psig[i]);
+        mapper_db_signal props = msig_properties(psig[i]);
+        if (props->hidden) {
+            // find associated output
+            mapper_signal output  = (mapper_signal) props->user_data;
+            // query the remote value
+            msig_query_remote(output, psig[i]);
+            x->snapshot_count ++;
         }
-        else {
-            // set to zero for now
-#ifdef MAXMSP
-            atom_setfloat(x->snapshot_in + i + 1, 0);
-#else
-            SETFLOAT(x->snapshot_in + i + 1, 0);
-#endif
-        }
-    }
-    
-    // for each output, query the remote values
-    for (i = 0; i < x->n_out; i++) {
-        msig_query_remote(x->outputs[i], x->hidden[i]);
     }
 }
     
@@ -405,9 +369,10 @@ void mapper_mute(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 void mapper_randomize(t_mapper *x)
 {
     int i;
-    if (x->ready && x->n_out) {
-        for (i = 0; i < x->n_out - 1; i ++) {
-            msig_update_float(x->outputs[i], (float)rand() / (float)RAND_MAX);
+    if (x->ready) {
+        mapper_signal *psig = mdev_get_outputs(x->device);
+        for (i = 0; i < mdev_num_outputs(x->device); i ++) {
+            msig_update_float(psig[i], (float)rand() / (float)RAND_MAX);
         }
     }
 }
@@ -469,104 +434,75 @@ void mapper_input_handler(mapper_signal msig, int has_value)
     if (has_value) {
         mapper_db_signal props = msig_properties(msig);
         t_mapper *x = props->user_data;
-        int i, length = props->length;
-        mapper_signal_value_t *value = msig_value(msig);
-        
-        if (length > (MAX_LIST-1)) {
-            post("Maximum list length is %i!", MAX_LIST-1);
-            length = MAX_LIST-1;
+        int count = mapper_pack_signal_value(msig, x->buffer, MAX_LIST);
+        if (count) {
+            outlet_anything(x->outlet1, gensym((char *)props->name), count, x->buffer);
         }
-        
-        if (props->type == 'f') {
-            for (i = 0; i < length; i++) {
-#ifdef MAXMSP
-                atom_setfloat(x->buffer + i + 1, (value+i)->f);
-#else
-                SETFLOAT(x->buffer + i, (value+i)->f);
-#endif
-            }
-        }
-        else if (props->type == 'i') {
-            for (i = 0; i < length; i++) {
-#ifdef MAXMSP
-                atom_setlong(x->buffer + i + 1, (long)(value+i)->i32);
-#else
-                SETFLOAT(x->buffer + i, (float)(value+i)->i32);
-#endif
-            }
-        }
-
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym((char *)props->name));
-        outlet_list(x->outlet1, ps_list, length+1, x->buffer);
-#else
-        outlet_anything(x->outlet1, gensym((char *)props->name), length, x->buffer);
-#endif
     }
+}
+
+// *********************************************************
+// -(pack signal value into atom array)---------------------
+int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length)
+{
+    int i = 0;
+    mapper_db_signal props = msig_properties(sig);
+    mapper_signal_value_t *value = msig_value(sig);
+    if (!value) {
+        return 0;
+    }
+    if (props->type == 'f') {
+        for (i = 0; i < props->length && i < max_length; i++) {
+#ifdef MAXMSP
+            atom_setfloat(buffer+i, (value + i)->f);
+#else
+            SETFLOAT(buffer+i, (value + i)->f);
+#endif
+        }
+    }
+    else if (props->type == 'i') {
+        for (i = 0; i < props->length && i < max_length; i++) {
+#ifdef MAXMSP
+            atom_setlong(buffer+i, (long)(value+i)->i32);
+#else
+            SETFLOAT(buffer+i, (float)(value+i)->i32);
+#endif
+        }
+    }
+    return i;
 }
     
 // *********************************************************
 // -(query handler)-----------------------------------------
 void mapper_query_handler(mapper_signal remote_sig, int has_value)
 {
-    int i;
-    mapper_db_signal temp_props;
     mapper_db_signal remote_props = msig_properties(remote_sig);
     mapper_signal local_sig = remote_props->user_data;
 
     mapper_db_signal local_props = msig_properties(local_sig);
     t_mapper *x = local_props->user_data;
+    if (!x->snapshot_count) {
+        return;
+    }
     if (!local_props) {
         post("error in query_handler: user_data is NULL");
         return;
     }
-    // find output signal in array
-    for (i = 0; i < x->n_out; i++) {
-        temp_props = msig_properties(x->outputs[i]);
-        if (strcmp(temp_props->name, local_props->name) == 0)
-            break;
-    }
-    if (i == x->n_out) {
-        post("error in query handler: could not find output signal");
-        return;
-    }
     
-    //int length = remote_props->length;
     if (has_value) {
-        mapper_signal_value_t *value = msig_value(remote_sig);
-#ifdef MAXMSP
-        if (remote_props->type == 'i')
-            atom_setlong(x->snapshot_out + i + 1, (long)value->i32);
-        else if (remote_props->type == 'f')
-            atom_setfloat(x->snapshot_out + i + 1, value->f);
-#else
-        if (remote_props->type == 'i')
-            SETFLOAT(x->snapshot_out + i + 1, (float)value->i32);
-        else if (remote_props->type == 'f')
-            SETFLOAT(x->snapshot_out + i + 1, value->f);
-#endif
+        int count = mapper_pack_signal_value(remote_sig, x->buffer, MAX_LIST);
+        if (count) {
+            outlet_anything(x->outlet1, gensym((char *)local_props->name), count, x->buffer);
+        }
     }
     else {
-        // remote has no value, set to 0 for now
-#ifdef MAXMSP
-        atom_setfloat(x->snapshot_out + i + 1, 0);
-#else
-        SETFLOAT(x->snapshot_out + i + 1, 0);
-#endif
+        outlet_anything(x->outlet2, gensym((char *)local_props->name), 0, 0);
     }
 
-    x->count_out ++;
+    x->snapshot_count --;
     
-    if (x->count_out == x->n_out - 1) {
-#ifdef MAXMSP
-        outlet_list(x->outlet2, ps_list, x->n_in, x->snapshot_in);
-        outlet_list(x->outlet2, ps_list, x->n_out, x->snapshot_out);
-#else
-        outlet_anything(x->outlet2, gensym("in"), x->n_out - 1, x->snapshot_in + 1);
-        outlet_anything(x->outlet2, gensym("out"), x->n_out - 1, x->snapshot_out + 1);
-#endif
+    if (x->snapshot_count == 0) {
         outlet_anything(x->outlet2, gensym("snapshot"), 0, 0);
-        x->snapshot_ready = 1;
     }
 }
     
@@ -591,23 +527,27 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
             if (osc_prefix_cmp(lnk->src_name, mdev_name(x->device), 0) == 0) {
                 mapper_db_signal *psig = mapper_db_get_inputs_by_device_name(x->db, 
                                                                              lnk->dest_name);
-                char source_name[1024], dest_name[1024];
+                char source_name[1024], dest_name[1024], hidden_name[32];
+                mapper_signal msig;
                 while (psig) {
                     // add matching output
                     post("linked to signal %s%s", lnk->dest_name, (*psig)->name);
-                    x->outputs[x->n_out] = mdev_add_output(x->device, (*psig)->name, (*psig)->length,
+                    msig = mdev_add_output(x->device, (*psig)->name, (*psig)->length,
                                            (*psig)->type, (*psig)->unit, 0, 0);
-                    msig_set_minimum(x->outputs[x->n_out], (*psig)->minimum);
-                    msig_set_maximum(x->outputs[x->n_out], (*psig)->maximum);
+                    msig_set_minimum(msig, (*psig)->minimum);
+                    msig_set_maximum(msig, (*psig)->maximum);
                     // add extra properties?
                     
+                    // add corresponding hidden input for query responses
+                    snprintf(hidden_name, 32, "%s%i", "/hidden", mdev_num_hidden_inputs(x->device));
+                    msig = mdev_add_hidden_input(x->device, hidden_name, (*psig)->length, (*psig)->type, (*psig)->unit, 0, 0, mapper_query_handler, msig);
+                    
                     // send /connect message
-                    msig_full_name(x->outputs[x->n_out], source_name, 1024);
+                    msig_full_name(msig, source_name, 1024);
                     strncpy(dest_name, (*psig)->device_name, 1024);
                     strncat(dest_name, (*psig)->name, 1024);
                     lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
                     psig = mapper_db_signal_next(psig);
-                    x->n_out ++;
                 }
                 //output numInputs
 #ifdef MAXMSP
@@ -623,23 +563,23 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                 mapper_db_signal *psig = mapper_db_get_outputs_by_device_name(x->db, 
                                                                               lnk->src_name);
                 char source_name[1024], dest_name[1024];
+                mapper_signal msig;
                 while (psig) {
-                    // add matching input - send /connect as well?
+                    // add matching input
                     post("linked to signal %s%s", lnk->src_name, (*psig)->name);
-                    x->inputs[x->n_in] = mdev_add_input(x->device, (*psig)->name, (*psig)->length,
+                    msig = mdev_add_input(x->device, (*psig)->name, (*psig)->length,
                                           (*psig)->type, (*psig)->unit, 0, 0, 
                                           mapper_input_handler, x);
-                    msig_set_minimum(x->inputs[x->n_in], (*psig)->minimum);
-                    msig_set_maximum(x->inputs[x->n_in], (*psig)->maximum);
+                    msig_set_minimum(msig, (*psig)->minimum);
+                    msig_set_maximum(msig, (*psig)->maximum);
                     // add extra properties?
                     
                     // send /connect message
                     strncpy(source_name, (*psig)->device_name, 1024);
                     strncat(source_name, (*psig)->name, 1024);
-                    msig_full_name(x->inputs[x->n_in], dest_name, 1024);
+                    msig_full_name(msig, dest_name, 1024);
                     lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
                     psig = mapper_db_signal_next(psig);
-                    x->n_in ++;
                 }
                 //output numInputs
 #ifdef MAXMSP
@@ -655,6 +595,19 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
         case MDB_MODIFY:
             break;
         case MDB_REMOVE:
+            // check if applies to me
+            if (osc_prefix_cmp(lnk->src_name, mdev_name(x->device), 0) == 0) {
+                mapper_db_signal *psig = mapper_db_get_inputs_by_device_name(x->db, 
+                                                                             lnk->dest_name);
+                // send /disconnect message
+                // remove associated signal and associated hidden input
+            }
+            else if (osc_prefix_cmp(lnk->dest_name, mdev_name(x->device), 0) == 0) {
+                mapper_db_signal *psig = mapper_db_get_outputs_by_device_name(x->db, 
+                                                                              lnk->src_name);
+                // send /disconnect message
+                // remove associated signal
+            }
             break;
     }
 }

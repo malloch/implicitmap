@@ -90,7 +90,7 @@ int port = 9000;
 // -(function prototypes)-----------------------------------
 void *mapper_new(t_symbol *s, int argc, t_atom *argv);
 void mapper_free(t_mapper *x);
-void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
+void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
 void mapper_poll(t_mapper *x);
 void mapper_snapshot_timeout(t_mapper *x);
 void mapper_randomize(t_mapper *x);
@@ -122,10 +122,10 @@ int main(void)
         t_class *c;
         c = class_new("implicitmap", (method)mapper_new, (method)mapper_free, 
                       (long)sizeof(t_mapper), 0L, A_GIMME, 0);
-        class_addmethod(c, (method)mapper_assist,         "assist",   A_CANT,     0);
-        class_addmethod(c, (method)mapper_snapshot,       "snapshot", A_GIMME,    0);
-        class_addmethod(c, (method)mapper_randomize,     "randomize",A_GIMME,    0);
-        class_addmethod(c, (method)mapper_anything,       "anything", A_GIMME,    0);
+        class_addmethod(c, (method)mapper_assist,           "assist",   A_CANT,     0);
+        class_addmethod(c, (method)mapper_snapshot,         "snapshot", A_GIMME,    0);
+        class_addmethod(c, (method)mapper_randomize,        "randomize",A_GIMME,    0);
+        class_addmethod(c, (method)mapper_list,             "list", A_GIMME,    0);
         class_addmethod(c, (method)mapper_print_properties, "print",  A_GIMME,    0);
         class_register(CLASS_BOX, c); /* CLASS_NOBOX */
         mapper_class = c;
@@ -374,11 +374,8 @@ void mapper_snapshot(t_mapper *x)
         if (props->hidden) {
             // find associated output
             mapper_signal output  = (mapper_signal) props->user_data;
-            mapper_db_signal temp_props = msig_properties(output);
             // query the remote value
-            post("querying signal %s -> %s", props->name, temp_props->name);
             x->query_count += msig_query_remote(output, psig[i]);
-            post("query count = %i", x->query_count);
         }
         else {
             mapper_signal_value_t *value = msig_value(psig[i]);
@@ -419,7 +416,7 @@ void mapper_snapshot(t_mapper *x)
 void mapper_snapshot_timeout(t_mapper *x)
 {
     if (x->query_count) {
-        post("query timeout!");
+        post("query timeout! setting query count to 0 and outputting current values.");
         // output snapshot as-is
         outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
         x->query_count = 0;
@@ -441,7 +438,7 @@ void mapper_randomize(t_mapper *x)
 
 // *********************************************************
 // -(anything)----------------------------------------------
-void mapper_anything(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
+void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 {
     if (argc < x->size_out) {
         post("vector size mismatch");
@@ -522,15 +519,11 @@ void update_vector(t_mapper *x)
 // -(query handler)-----------------------------------------
 void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, void *value)
 {
-    post("query response!");
     mapper_signal local_sig = (mapper_signal) remote_props->user_data;
 
     mapper_db_signal local_props = msig_properties(local_sig);
-    t_mapper *x = (t_mapper *) local_props->user_data;
-    if (x->query_count <= 0) {
-        post("query count <= 0");
-        return;
-    }
+    t_mapper *x = local_props->user_data;
+    
     if (!local_props) {
         post("error in query_handler: user_data is NULL");
         return;
@@ -539,7 +532,6 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
     int j, result;
     
     result = hashtab_lookup(x->hash_out, gensym((char *)local_props->name), &offset);
-    post("looking up output %s... %s", local_props->name, result ? "failed" : "succeeded");
     if (!result) {
         for (j = 0; j < local_props->length; j++) {
             if (!value) {
@@ -569,8 +561,9 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
         
         x->query_count --;
     
-        if (x->query_count <= 0) {
+        if (x->query_count == 0) {
             outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
+            outlet_anything(x->outlet3, gensym("snapshot"), 0, 0);
             x->query_count = 0;
         }
     }
@@ -599,13 +592,15 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                                                                              lnk->dest_name);
                 char source_name[1024], dest_name[1024], hidden_name[32];
                 mapper_signal msig;
+                mapper_db_signal props;
                 while (psig) {
                     // add matching output
-                    post("linked to signal %s%s", lnk->dest_name, (*psig)->name);
                     msig = mdev_add_output(x->device, (*psig)->name, (*psig)->length,
                                            (*psig)->type, (*psig)->unit, 0, 0);
                     msig_set_minimum(msig, (*psig)->minimum);
                     msig_set_maximum(msig, (*psig)->maximum);
+                    props = msig_properties(msig);
+                    props->user_data = x;
                     // add extra properties?
                     
                     // send /connect message
@@ -638,7 +633,6 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                 mapper_signal msig;
                 while (psig) {
                     // add matching input
-                    post("linked to signal %s%s", lnk->src_name, (*psig)->name);
                     msig = mdev_add_input(x->device, (*psig)->name, (*psig)->length,
                                           (*psig)->type, (*psig)->unit, 0, 0, 
                                           mapper_input_handler, x);
@@ -698,7 +692,6 @@ void mapper_regenerate_hash_in(t_mapper *x)
     for (i = 0; i < mdev_num_inputs(x->device); i++) {
         props = msig_properties(psig[i]);
         hashtab_store(x->hash_in, gensym((char *)props->name), (t_object *)j);
-        post("storing input hash %s: %i", props->name, j);
         j += props->length;
     }
     
@@ -719,7 +712,6 @@ void mapper_regenerate_hash_out(t_mapper *x)
     for (i = 0; i < mdev_num_outputs(x->device); i++) {
         props = msig_properties(psig[i]);
         hashtab_store(x->hash_out, gensym((char *)props->name), (t_object *)j);
-        post("storing output hash %s: %i", props->name, j);
         j += props->length;
     }
     

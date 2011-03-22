@@ -427,12 +427,45 @@ void mapper_snapshot_timeout(t_mapper *x)
 // -(randomize)---------------------------------------------
 void mapper_randomize(t_mapper *x)
 {
-    int i;
+    int i, j, k = 0;
+    float rand_val;
+    mapper_db_signal props;
     if (x->ready) {
         mapper_signal *psig = mdev_get_outputs(x->device);
         for (i = 0; i < mdev_num_outputs(x->device); i ++) {
-            msig_update_float(psig[i], (float)rand() / (float)RAND_MAX);
+            props = msig_properties(psig[i]);
+            if (props->type == 'f') {
+                float v[props->length];
+                for (j = 0; j < props->length; j++) {
+                    rand_val = (float)rand() / (float)RAND_MAX;
+                    if (props->minimum && props->maximum) {
+                        v[j] = rand_val * (props->maximum->f - props->minimum->f) - props->minimum->f;
+                    }
+#ifdef MAXMSP
+                    atom_setfloat(x->buffer_out+(k++), v[j]);
+#else
+                    SETFLOAT(x->buffer_out+(k++), v[j]);
+#endif
+                }
+                msig_update(psig[i], v);
+            }
+            else if (props->type == 'i') {
+                int v[props->length];
+                for (j = 0; j < props->length; j++) {
+                    rand_val = (float)rand() / (float)RAND_MAX;
+                    if (props->minimum && props->maximum) {
+                        v[j] = (int) (rand_val * (props->maximum->i32 - props->minimum->i32) - props->minimum->i32);
+                    }
+#ifdef MAXMSP
+                    atom_setfloat(x->buffer_in+(k++), v[j]);
+#else
+                    SETFLOAT(x->buffer_in+(k++), v[j]);
+#endif
+                }
+                msig_update(psig[i], v);
+            }
         }
+        outlet_anything(x->outlet2, gensym("out"), k, x->buffer_out);
     }
 }
 
@@ -483,7 +516,7 @@ void mapper_input_handler(mapper_signal sig, mapper_db_signal props, void *value
 #ifdef MAXMSP
                 atom_setfloat(x->buffer_in+(int)offset+j, 0);
 #else
-                SETFLOAT(x->buffer_in[offset+j], 0);
+                SETFLOAT(x->buffer_in+offset+j, 0);
 #endif
             }
             else if (props->type == 'f') {
@@ -491,7 +524,7 @@ void mapper_input_handler(mapper_signal sig, mapper_db_signal props, void *value
 #ifdef MAXMSP
                 atom_setfloat(x->buffer_in+(int)offset+j, f[j]);
 #else
-                SETFLOAT(x->buffer_in[offset+j], f[j]);
+                SETFLOAT(x->buffer_in+offset+j, f[j]);
 #endif
             }
             else if (props->type == 'i') {
@@ -499,7 +532,7 @@ void mapper_input_handler(mapper_signal sig, mapper_db_signal props, void *value
 #ifdef MAXMSP
                 atom_setfloat(x->buffer_in+(int)offset+j, (float)i[j]);
 #else
-                SETFLOAT(x->buffer_in[offset+j], (float)i[j]);
+                SETFLOAT(x->buffer_in+offset+j, (float)i[j]);
 #endif
             }
         }
@@ -595,7 +628,9 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                 mapper_db_signal props;
                 while (psig) {
                     // add matching output
-                    msig = mdev_add_output(x->device, (*psig)->name, (*psig)->length,
+                    strncpy(dest_name, (*psig)->device_name, 1024);
+                    strncat(dest_name, (*psig)->name, 1024);
+                    msig = mdev_add_output(x->device, dest_name, (*psig)->length,
                                            (*psig)->type, (*psig)->unit, 0, 0);
                     msig_set_minimum(msig, (*psig)->minimum);
                     msig_set_maximum(msig, (*psig)->maximum);
@@ -605,8 +640,6 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                     
                     // send /connect message
                     msig_full_name(msig, source_name, 1024);
-                    strncpy(dest_name, (*psig)->device_name, 1024);
-                    strncat(dest_name, (*psig)->name, 1024);
                     lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
                     
                     // add corresponding hidden input for query responses
@@ -633,7 +666,9 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                 mapper_signal msig;
                 while (psig) {
                     // add matching input
-                    msig = mdev_add_input(x->device, (*psig)->name, (*psig)->length,
+                    strncpy(source_name, (*psig)->device_name, 1024);
+                    strncat(source_name, (*psig)->name, 1024);
+                    msig = mdev_add_input(x->device, source_name, (*psig)->length,
                                           (*psig)->type, (*psig)->unit, 0, 0, 
                                           mapper_input_handler, x);
                     msig_set_minimum(msig, (*psig)->minimum);
@@ -641,8 +676,6 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                     // add extra properties?
                     
                     // send /connect message
-                    strncpy(source_name, (*psig)->device_name, 1024);
-                    strncat(source_name, (*psig)->name, 1024);
                     msig_full_name(msig, dest_name, 1024);
                     lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
                     

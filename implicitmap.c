@@ -94,8 +94,8 @@ void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
 void mapper_poll(t_mapper *x);
 void mapper_snapshot_timeout(t_mapper *x);
 void mapper_randomize(t_mapper *x);
-void mapper_input_handler(mapper_signal msig, mapper_db_signal props, void *value);
-void mapper_query_handler(mapper_signal msig, mapper_db_signal props, void *value);
+void mapper_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
+void mapper_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
 void mapper_print_properties(t_mapper *x);
 int mapper_setup_mapper(t_mapper *x);
@@ -378,7 +378,7 @@ void mapper_snapshot(t_mapper *x)
             x->query_count += msig_query_remote(output, psig[i]);
         }
         else {
-            mapper_signal_value_t *value = msig_value(psig[i]);
+            mapper_signal_value_t *value = msig_value(psig[i], 0);
             int offset = 0;
             if (hashtab_lookup(x->hash_in, gensym((char *)props->name), (t_object **)offset)) {
                 for (j = 0; j < props->length; j++) {
@@ -503,7 +503,7 @@ void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 
 // *********************************************************
 // -(input handler)-----------------------------------------
-void mapper_input_handler(mapper_signal sig, mapper_db_signal props, void *value)
+void mapper_input_handler(mapper_signal sig, mapper_db_signal props, mapper_timetag_t *time, void *value)
 {
     t_mapper *x = props->user_data;
     int result, j;
@@ -550,7 +550,7 @@ void update_vector(t_mapper *x)
     
 // *********************************************************
 // -(query handler)-----------------------------------------
-void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, void *value)
+void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, mapper_timetag_t *time, void *value)
 {
     mapper_signal local_sig = (mapper_signal) remote_props->user_data;
 

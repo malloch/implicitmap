@@ -81,6 +81,8 @@ typedef struct _mapper
     t_hashtab *hash_out;
     int query_count;
     t_atom buffer[MAX_LIST];
+    char sig_in[256];
+    char sig_out[256];
 } t_mapper;
 
 t_symbol *ps_list;
@@ -96,7 +98,7 @@ void mapper_snapshot_timeout(t_mapper *x);
 void mapper_randomize(t_mapper *x);
 void mapper_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 void mapper_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
-void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
+void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *user);
 void mapper_print_properties(t_mapper *x);
 int mapper_setup_mapper(t_mapper *x);
 void mapper_snapshot(t_mapper *x);   
@@ -105,10 +107,8 @@ void mapper_snapshot(t_mapper *x);
 #endif
 void add_input(t_mapper *x);
 void add_output(t_mapper *x);
-static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length);
-void mapper_regenerate_hash_in(t_mapper *x);
-void mapper_regenerate_hash_out(t_mapper *x);
+int mapper_find_ordinal(const char *str);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
@@ -243,7 +243,7 @@ void mapper_free(t_mapper *x)
         post("ok");
     }
     if (x->db) {
-        mapper_db_remove_link_callback(x->db, mapper_link_handler, x);
+        mapper_db_remove_mapping_callback(x->db, mapper_connect_handler, x);
     }
     if (x->monitor) {
         post("Freeing monitor...");
@@ -604,53 +604,44 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
     
 // *********************************************************
 // -(link handler)------------------------------------------
-void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
+void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *user)
 {
-    // if link involves me, learn remote namespace and duplicate it
-    // if unlink involves me, remove matching namespace
+    // if connected involves current generic signal, create a new generic signal
     t_mapper *x = user;
     if (!x) {
-        post("error in link handler: user_data is NULL");
+        post("error in connect handler: user_data is NULL");
         return;
     }
     if (!x->ready) {
-        post("error in link handler: device not ready");
+        post("error in connect handler: device not ready");
         return;
     }
     switch (a) {
-        case MDB_NEW:
+        case MDB_NEW: {
             // check if applies to me
-            if (osc_prefix_cmp(lnk->src_name, mdev_name(x->device), 0) == 0) {
-                mapper_db_signal *psig = mapper_db_get_inputs_by_device_name(x->db, 
-                                                                             lnk->dest_name);
-                char source_name[1024], dest_name[1024], hidden_name[32];
+            post("comparing %s to %s", map->src_name, x->sig_out);
+            post("comparing %s to %s", map->dest_name, x->sig_in);
+            if (strcmp(map->src_name, x->sig_out) == 0) {
+                post("connected to my output!");
+                float min = 0, max = 1;
                 mapper_signal msig;
                 mapper_db_signal props;
-                while (psig) {
-                    // add matching output
-                    strncpy(dest_name, (*psig)->device_name, 1024);
-                    strncat(dest_name, (*psig)->name, 1024);
-                    msig = mdev_add_output(x->device, dest_name, (*psig)->length,
-                                           (*psig)->type, (*psig)->unit, 0, 0);
-                    msig_set_minimum(msig, (*psig)->minimum);
-                    msig_set_maximum(msig, (*psig)->maximum);
-                    props = msig_properties(msig);
-                    props->user_data = x;
-                    // add extra properties?
-                    
-                    // send /connect message
-                    msig_full_name(msig, source_name, 1024);
-                    lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
-                    
-                    // add corresponding hidden input for query responses
-                    snprintf(hidden_name, 32, "%s%i", "/hidden", mdev_num_hidden_inputs(x->device));
-                    msig = mdev_add_hidden_input(x->device, hidden_name, (*psig)->length,
-                                                 (*psig)->type, (*psig)->unit, 0, 0,
-                                                 mapper_query_handler, msig);
-                    
-                    psig = mapper_db_signal_next(psig);
-                }
-                mapper_regenerate_hash_out(x);
+                char sig_hidden[256];
+                
+                // add a new generic output signal
+                snprintf(x->sig_out, 256, "%s%i", "/out.", mdev_num_outputs(x->device));
+                msig = mdev_add_output(x->device, x->sig_out, 
+                                       1, 'f', 0, &min, &max);
+                props = msig_properties(msig);
+                props->user_data = x;
+                msig_full_name(msig, x->sig_out, 256);
+                post("created new output %s", x->sig_out);
+                                
+                // add a corresponding hidden input signal for querying
+                snprintf(sig_hidden, 1024, "%s%i", "/~out.", mdev_num_hidden_inputs(x->device));
+                mdev_add_hidden_input(x->device, sig_hidden, 1, 'f', 0, &min, &max,
+                                      mapper_query_handler, msig);
+
                 //output numOutputs
 #ifdef MAXMSP
                 atom_setlong(x->buffer, mdev_num_outputs(x->device));
@@ -659,29 +650,16 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
 #endif
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
             }
-            else if (osc_prefix_cmp(lnk->dest_name, mdev_name(x->device), 0) == 0) {
-                mapper_db_signal *psig = mapper_db_get_outputs_by_device_name(x->db, 
-                                                                              lnk->src_name);
-                char source_name[1024], dest_name[1024];
-                mapper_signal msig;
-                while (psig) {
-                    // add matching input
-                    strncpy(source_name, (*psig)->device_name, 1024);
-                    strncat(source_name, (*psig)->name, 1024);
-                    msig = mdev_add_input(x->device, source_name, (*psig)->length,
-                                          (*psig)->type, (*psig)->unit, 0, 0, 
-                                          mapper_input_handler, x);
-                    msig_set_minimum(msig, (*psig)->minimum);
-                    msig_set_maximum(msig, (*psig)->maximum);
-                    // add extra properties?
-                    
-                    // send /connect message
-                    msig_full_name(msig, dest_name, 1024);
-                    lo_send(x->address, "/connect", "ssss", source_name, dest_name, "@mode", "bypass");
-                    
-                    psig = mapper_db_signal_next(psig);
-                }
-                mapper_regenerate_hash_in(x);
+            else if (strcmp(map->dest_name, x->sig_in) == 0) {
+                post("connected to my input!");
+                float min = 0, max = 1;
+                
+                // create a new generic input signal
+                snprintf(x->sig_in, 1024, "%s%i", "/in.", mdev_num_inputs(x->device));
+                mapper_signal msig = mdev_add_input(x->device, x->sig_in, 1, 'f', 0, &min, &max, mapper_input_handler, x);
+                msig_full_name(msig, x->sig_in, 256);
+                post("created new input %s", x->sig_in);
+                
                 //output numInputs
 #ifdef MAXMSP
                 atom_setlong(x->buffer, mdev_num_inputs(x->device));
@@ -691,64 +669,12 @@ void mapper_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user)
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
             }
             break;
+        }
         case MDB_MODIFY:
             break;
         case MDB_REMOVE:
-            // check if applies to me
-            if (osc_prefix_cmp(lnk->src_name, mdev_name(x->device), 0) == 0) {
-                mapper_db_signal *psig = mapper_db_get_inputs_by_device_name(x->db, 
-                                                                             lnk->dest_name);
-                // send /disconnect message
-                // remove associated signal and associated hidden input
-            }
-            else if (osc_prefix_cmp(lnk->dest_name, mdev_name(x->device), 0) == 0) {
-                mapper_db_signal *psig = mapper_db_get_outputs_by_device_name(x->db, 
-                                                                              lnk->src_name);
-                // send /disconnect message
-                // remove associated signal
-            }
             break;
     }
-}
-
-// *********************************************************
-// -(regenerate hash table for input signals)---------------
-void mapper_regenerate_hash_in(t_mapper *x)
-{
-    int i = 0, j = 0;
-    // clear previous entries
-    hashtab_clear(x->hash_in);
-    
-    mapper_signal *psig = mdev_get_inputs(x->device);
-    mapper_db_signal props;
-    
-    for (i = 0; i < mdev_num_inputs(x->device); i++) {
-        props = msig_properties(psig[i]);
-        hashtab_store(x->hash_in, gensym((char *)props->name), (t_object *)j);
-        j += props->length;
-    }
-    
-    x->size_in = j;
-}
-
-// *********************************************************
-// -(regenerate hash table for output signals)--------------
-void mapper_regenerate_hash_out(t_mapper *x)
-{
-    int i = 0, j = 0;
-    // clear previous entries
-    hashtab_clear(x->hash_out);
-    
-    mapper_signal *psig = mdev_get_outputs(x->device);
-    mapper_db_signal props;
-    
-    for (i = 0; i < mdev_num_outputs(x->device); i++) {
-        props = msig_properties(psig[i]);
-        hashtab_store(x->hash_out, gensym((char *)props->name), (t_object *)j);
-        j += props->length;
-    }
-    
-    x->size_out = j;
 }
 
 // *********************************************************
@@ -772,7 +698,7 @@ int mapper_setup_mapper(t_mapper *x)
     lo_address_set_ttl(x->address, 1);
     
     x->db = mapper_monitor_get_db(x->monitor);
-    mapper_db_add_link_callback(x->db, mapper_link_handler, x);
+    mapper_db_add_mapping_callback(x->db, mapper_connect_handler, x);
     
     mapper_print_properties(x);
     
@@ -788,42 +714,55 @@ void mapper_poll(t_mapper *x)
     if (!x->ready) {
         if (mdev_ready(x->device)) {
             x->ready = 1;
+            
+            // create a new generic output signal
+            float min = 0, max = 1;
+            mapper_signal msig;
+            mapper_db_signal props;
+            char sig_hidden[256];
+            snprintf(x->sig_out, 256, "%s%i", "/out.", mdev_num_outputs(x->device));
+            msig = mdev_add_output(x->device, x->sig_out, 1, 'f', 0, &min, &max);
+            props = msig_properties(msig);
+            props->user_data = x;
+            int temp = msig_full_name(msig, x->sig_out, 256);
+            post("created new output %s, success? %i", x->sig_out, temp);
+            
+            // add corresponding hidden input for querying
+            snprintf(sig_hidden, 1024, "%s%i", "/~out.", mdev_num_hidden_inputs(x->device));
+            mdev_add_hidden_input(x->device, sig_hidden, 1, 'f', 0, &min, &max,
+                                  mapper_query_handler, msig);
+            
+            // create a new generic input signal
+            snprintf(x->sig_in, 256, "%s%i", "/in.", mdev_num_inputs(x->device));
+            msig = mdev_add_input(x->device, x->sig_in, 1, 'f', 0,
+                                  &min, &max, mapper_input_handler, x);
+            msig_full_name(msig, x->sig_in, 256);
+            post("created new input %s", x->sig_in);
+            
             mapper_print_properties(x);
         }
     }
     if (x->new_in) {
-        update_vector(x);
+        //update_vector(x);
     }
     clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
 }
 
-/* Helper function to check if the OSC prefix matches.  Like strcmp(),
- * returns 0 if they match (up to the second '/'), non-0 otherwise.
- * Also optionally returns a pointer to the remainder of str1 after
- * the prefix. */
-static int osc_prefix_cmp(const char *str1, const char *str2,
-                          const char **rest)
+// *********************************************************
+// -(poll libmapper)----------------------------------------
+int mapper_find_ordinal(const char *str)
 {
-    if (str1[0]!='/') {
-        //trace("OSC string '%s' does not start with '/'.\n", str1);
-        return 0;
+    if (!str)
+        return -1;
+    int i, j;
+    
+    for (i = strlen(str) ; i > 0; i--) {
+        if (str[i] == '.') {
+            if (sscanf(str+i+1, "%d", &j) == EOF)
+                return -1;
+            else
+                return j;
+        }
     }
-    if (str2[0]!='/') {
-        //trace("OSC string '%s' does not start with '/'.\n", str2);
-        return 0;
-    }
-    
-    // skip first slash
-    const char *s1=str1+1, *s2=str2+1;
-    
-    while (*s1 && (*s1)!='/') s1++;
-    while (*s2 && (*s2)!='/') s2++;
-    
-    int n1 = s1-str1, n2 = s2-str2;
-    if (n1!=n2) return 1;
-    
-    if (rest)
-        *rest = s1;
-    
-    return strncmp(str1, str2, n1);
+    return -1;
 }

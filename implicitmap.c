@@ -58,6 +58,12 @@
 
 // *********************************************************
 // -(object struct)-----------------------------------------
+typedef struct _signal_ref
+{
+    void *x;
+    int offset;
+} t_signal_ref;
+
 typedef struct _mapper 
 {
     t_object ob;
@@ -73,14 +79,14 @@ typedef struct _mapper
     mapper_db db;
     int ready;
     int new_in;
-    int input_vector_positions[MAX_LIST];
     t_atom buffer_in[MAX_LIST];
     int size_in;
-    int output_vector_positions[MAX_LIST];
     t_atom buffer_out[MAX_LIST];
     int size_out;
     int query_count;
     t_atom buffer[MAX_LIST];
+    t_signal_ref signals_in[MAX_LIST];
+    t_signal_ref signals_out[MAX_LIST];
 } t_mapper;
 
 t_symbol *ps_list;
@@ -109,6 +115,8 @@ int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length);
 int mapper_find_ordinal(const char *str);
 void mapper_update_input_vector_positions(t_mapper *x);
 void mapper_update_output_vector_positions(t_mapper *x);
+void set_sym(t_atom *argv, char *sym);
+void set_int(t_atom *argv, int i);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
@@ -210,6 +218,8 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
                 SETFLOAT(x->buffer_in+i, 0);
                 SETFLOAT(x->buffer_out+i, 0);
 #endif
+                x->signals_in[i].x = x;
+                x->signals_out[i].x = x;
             }
             
             x->size_in = 0;
@@ -233,7 +243,7 @@ void *mapper_new(t_symbol *s, int argc, t_atom *argv)
 void mapper_free(t_mapper *x)
 {
     clock_unset(x->clock);    // Remove clock routine from the scheduler
-    clock_free(x->clock);        // Frees memeory used by clock
+    clock_free(x->clock);     // Frees memeory used by clock
     
     if (x->device) {
         post("Freeing device %s...", mdev_name(x->device));
@@ -256,73 +266,34 @@ void mapper_free(t_mapper *x)
 // *********************************************************
 // -(print properties)--------------------------------------
 void mapper_print_properties(t_mapper *x)
-{
-    char *message;
-    
+{    
     if (x->ready) {        
         //output name
-        message = strdup(mdev_name(x->device));
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("name"));
-        atom_setsym(x->buffer + 1, gensym(message));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETSYMBOL(x->buffer, gensym(message));
+        set_sym(x->buffer, (char *)mdev_name(x->device));
         outlet_anything(x->outlet3, gensym("name"), 1, x->buffer);
-#endif
         
         //output interface
-        message = strdup(mdev_interface(x->device));
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("interface"));
-        atom_setsym(x->buffer + 1, gensym(message));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETSYMBOL(x->buffer, gensym(message));
-        outlet_anything(x->outlet3, gensym("name"), 1, x->buffer);
-#endif
+        set_sym(x->buffer, (char *)mdev_interface(x->device));
+        outlet_anything(x->outlet3, gensym("interface"), 1, x->buffer);
         
         //output IP
         const struct in_addr *ip = mdev_ip4(x->device);
-        message = strdup(inet_ntoa(*ip));
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("IP"));
-        atom_setsym(x->buffer + 1, gensym(message));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETSYMBOL(x->buffer, gensym(message));
-        outlet_anything(x->outlet2, gensym("IP"), 1, x->buffer);
-#endif
+        if (ip) {
+            set_sym(x->buffer, inet_ntoa(*ip));
+            outlet_anything(x->outlet2, gensym("IP"), 1, x->buffer);
+        }
         
         //output port
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("port"));
-        atom_setlong(x->buffer + 1, mdev_port(x->device));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETFLOAT(x->buffer, (float)mdev_port(x->device));
+        set_int(x->buffer, mdev_port(x->device));
         outlet_anything(x->outlet3, gensym("port"), 1, x->buffer);
-#endif
         
         //output numInputs
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("numInputs"));
-        atom_setlong(x->buffer + 1, mdev_num_inputs(x->device));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETFLOAT(x->buffer, (float)mdev_n_inputs(x->device));
+        set_int(x->buffer, mdev_num_inputs(x->device));
         outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
-#endif
         
         //output numOutputs
-#ifdef MAXMSP
-        atom_setsym(x->buffer, gensym("numOutputs"));
-        atom_setlong(x->buffer + 1, mdev_num_outputs(x->device));
-        outlet_list(x->outlet3, ps_list, 2, x->buffer);
-#else
-        SETFLOAT(x->buffer, (float)mdev_num_outputs(x->device));
+        set_int(x->buffer, mdev_num_outputs(x->device));
         outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
-#endif
     }
 }
 
@@ -358,7 +329,7 @@ void mapper_snapshot(t_mapper *x)
         return;
     }
     
-    int i, j=0, k;
+    int i, j;
     mapper_signal *psig;
     x->query_count = 0;
     
@@ -375,27 +346,27 @@ void mapper_snapshot(t_mapper *x)
         }
         else {
             mapper_signal_value_t *value = msig_value(psig[i], 0);
-            int offset = x->input_vector_positions[j++];
-            for (k = 0; k < props->length; k++) {
+            t_signal_ref *ref = props->user_data;
+            for (j=0; j < props->length; j++) {
                 if (!value) {
 #ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+offset+k, 0);
+                    atom_setfloat(x->buffer_in+ref->offset+j, 0);
 #else
-                    SETFLOAT(x->buffer_in+offset+k, 0);
+                    SETFLOAT(x->buffer_in+ref->offset+j, 0);
 #endif
                 }
                 else if (props->type == 'f') {
 #ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+offset+k, (value+k)->f);
+                    atom_setfloat(x->buffer_in+ref->offset+j, (value+j)->f);
 #else
-                    SETFLOAT(x->buffer_in+offset+k, (value+k)->f);
+                    SETFLOAT(x->buffer_in+ref->offset+j, (value+j)->f);
 #endif
                 }
                 else if (props->type == 'i') {
 #ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+offset+k, (float)(value+k)->i32);
+                    atom_setfloat(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
 #else
-                    SETFLOAT(x->buffer_in+offset+k, (float)(value+k)->i32);
+                    SETFLOAT(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
 #endif
                 }
             }
@@ -472,11 +443,11 @@ void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
         return;
     }
     
-    int i = 0, j = 0, k = 0;
+    int i=0, j=0, k=0;
     
     mapper_signal *psig = mdev_get_outputs(x->device);
     
-    for (i = 1; i < mdev_num_outputs(x->device); i++) {
+    for (i=1; i < mdev_num_outputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
         if (props->type == 'f') {
             float v[props->length];
@@ -499,37 +470,34 @@ void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv)
 // -(input handler)-----------------------------------------
 void mapper_input_handler(mapper_signal sig, mapper_db_signal props, mapper_timetag_t *time, void *value)
 {
-    t_mapper *x = props->user_data;
-    int sig_num, j;
+    t_signal_ref *ref = props->user_data;
+    t_mapper *x = ref->x;
+    if (!x)
+        post("pointer problem! %i", x);
     
-    sig_num = mapper_find_ordinal(props->name);
-    if (sig_num == -1 || sig_num >= MAX_LIST)
-        return;
-    
-    int offset = x->input_vector_positions[sig_num];
-    
-    for (j = 0; j < props->length; j++) {
+    int j;
+    for (j=0; j < props->length; j++) {
         if (!value) {
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_in + offset + j, 0);
+            atom_setfloat(x->buffer_in+ref->offset+j, 0);
 #else
-            SETFLOAT(x->buffer_in + offset + j, 0);
+            SETFLOAT(x->buffer_in+ref->offset+j, 0);
 #endif
         }
         else if (props->type == 'f') {
             float *f = value;
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_in + offset + j, f[j]);
+            atom_setfloat(x->buffer_in+ref->offset+j, f[j]);
 #else
-            SETFLOAT(x->buffer_in + offset + j, f[j]);
+            SETFLOAT(x->buffer_in+ref->offset+j, f[j]);
 #endif
         }
         else if (props->type == 'i') {
             int *i = value;
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_in + offset + j, (float)i[j]);
+            atom_setfloat(x->buffer_in + ref->offset + j, (float)i[j]);
 #else
-            SETFLOAT(x->buffer_in + offset + j, (float)i[j]);
+            SETFLOAT(x->buffer_in + ref->offset + j, (float)i[j]);
 #endif
         }
     }
@@ -548,46 +516,41 @@ void update_vector(t_mapper *x)
 // -(query handler)-----------------------------------------
 void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, mapper_timetag_t *time, void *value)
 {
+    post("query handler: %s", remote_props->name);
     mapper_signal local_sig = (mapper_signal) remote_props->user_data;
 
     mapper_db_signal local_props = msig_properties(local_sig);
-    t_mapper *x = local_props->user_data;
+    t_signal_ref *ref = local_props->user_data;
+    t_mapper *x = ref->x;
     
     if (!local_props) {
         post("error in query_handler: user_data is NULL");
         return;
     }
-    int offset, sig_num, j;
-    
-    sig_num = mapper_find_ordinal(local_props->name);
-    
-    if (sig_num == -1 || sig_num >= MAX_LIST)
-        return;
-    
-    offset = x->output_vector_positions[sig_num];
-    
+    int j;
+        
     for (j = 0; j < local_props->length; j++) {
         if (!value) {
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_out+(int)offset+j, 0);
+            atom_setfloat(x->buffer_out+ref->offset+j, 0);
 #else
-            SETFLOAT(x->buffer_out+(int)offset+j, 0);
+            SETFLOAT(x->buffer_out+ref->offset+j, 0);
 #endif
         }
         else if (local_props->type == 'f') {
             float *f = value;
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_out+(int)offset+j, f[j]);
+            atom_setfloat(x->buffer_out+ref->offset+j, f[j]);
 #else
-            SETFLOAT(x->buffer_out+(int)offset+j, f[j]);
+            SETFLOAT(x->buffer_out+ref->offset+j, f[j]);
 #endif
         }
         else if (local_props->type == 'i') {
             int *i = value;
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_out+(int)offset+j, (float)i[j]);
+            atom_setfloat(x->buffer_out+ref->offset+j, (float)i[j]);
 #else
-            SETFLOAT(x->buffer_out+(int)offset+j, (float)i[j]);
+            SETFLOAT(x->buffer_out+ref->offset+j, (float)i[j]);
 #endif
         }
     }
@@ -619,18 +582,22 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
         case MDB_NEW: {
             // check if applies to me
             if (strcmp(map->src_name, x->name) == 0) {
+                if (mdev_num_outputs(x->device) >= MAX_LIST) {
+                    post("Max outputs reached!");
+                    return;
+                }
                 // add a matching output signal
                 mapper_signal msig;
                 char str[256];
                 snprintf(str, 256, "%s%i", "/out.", mdev_num_outputs(x->device));
-                msig = mdev_add_output(x->device, str, map->dest_length, map->dest_type, 0,
+                msig = mdev_add_output(x->device, str, map->dest_length, 'f', 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MIN) ? &map->range.dest_min : 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MAX) ? &map->range.dest_max : 0);
-                mapper_db_signal props = msig_properties(msig);
-                props->user_data = x;
                 // connect the new signal
                 msig_full_name(msig, str, 256);
-                mapper_monitor_connect(x->monitor, str, map->dest_name, 0, 0);
+                mapper_db_mapping_t props;
+                props.mode = MO_BYPASS;
+                mapper_monitor_connect(x->monitor, str, map->dest_name, &props, MAPPING_MODE);
                 // add a corresponding hidden input signal for querying
                 snprintf(str, 256, "%s%i", "/~out.", mdev_num_hidden_inputs(x->device));
                 mdev_add_hidden_input(x->device, str, map->dest_length,
@@ -650,17 +617,23 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
             }
             else if (strcmp(map->dest_name, x->name) == 0) {
+                if (mdev_num_inputs(x->device) >= MAX_LIST) {
+                    post("Max inputs reached!");
+                    return;
+                }
                 // create a matching input signal
                 mapper_signal msig;
                 char str[256];
                 snprintf(str, 256, "%s%i", "/in.", mdev_num_inputs(x->device));
-                msig = mdev_add_input(x->device, str, map->src_length, map->src_type, 0,
+                msig = mdev_add_input(x->device, str, map->src_length, 'f', 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MIN) ? &map->range.src_min : 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MAX) ? &map->range.src_max : 0,
                                       mapper_input_handler, x);
                 // connect the new signal
+                mapper_db_mapping_t props;
+                props.mode = MO_BYPASS;
                 msig_full_name(msig, str, 256);
-                mapper_monitor_connect(x->monitor, map->src_name, str, 0, 0);
+                mapper_monitor_connect(x->monitor, map->src_name, str, &props, MAPPING_MODE);
                 // disconnect the generic signal
                 mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
                 
@@ -694,7 +667,8 @@ void mapper_update_input_vector_positions(t_mapper *x)
     for (i = 1; i < mdev_num_inputs(x->device) + mdev_num_hidden_inputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
         if (!props->hidden) {
-            x->input_vector_positions[j] = k;
+            x->signals_in[j].offset = k;
+            props->user_data = &x->signals_in[j];
             j++;
             k += props->length;
         }
@@ -712,7 +686,8 @@ void mapper_update_output_vector_positions(t_mapper *x)
     
     for (i = 1; i < mdev_num_outputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
-        x->output_vector_positions[j] = k;
+        x->signals_out[j].offset = k;
+        props->user_data = &x->signals_out[j];
         j++;
         k += props->length;
     }
@@ -775,20 +750,23 @@ void mapper_poll(t_mapper *x)
 }
 
 // *********************************************************
-// -(poll libmapper)----------------------------------------
-int mapper_find_ordinal(const char *str)
+// -(helper function for set symbol to atom)----------------
+void set_sym(t_atom *argv, char *sym)
 {
-    if (!str)
-        return -1;
-    int i, j;
-    
-    for (i = strlen(str) ; i > 0; i--) {
-        if (str[i] == '.') {
-            if (sscanf(str+i+1, "%d", &j) == EOF)
-                return -1;
-            else
-                return j;
-        }
-    }
-    return -1;
+#ifdef MAXMSP
+    atom_setsym(argv, gensym(sym));
+#else
+    SETSYMBOL(argv, gensym(sym));
+#endif
+}
+
+// *********************************************************
+// -(helper function for set int to atom)-------------------
+void set_int(t_atom *argv, int i)
+{
+#ifdef MAXMSP
+    atom_setlong(argv, (long)i);
+#else
+    SETFLOAT(argv, (float)i);
+#endif
 }

@@ -117,6 +117,7 @@ void mapper_update_input_vector_positions(t_mapper *x);
 void mapper_update_output_vector_positions(t_mapper *x);
 void set_sym(t_atom *argv, char *sym);
 void set_int(t_atom *argv, int i);
+static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
@@ -589,8 +590,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 // add a matching output signal
                 mapper_signal msig;
                 char str[256];
-                snprintf(str, 256, "%s%i", "/out.", mdev_num_outputs(x->device));
-                msig = mdev_add_output(x->device, str, map->dest_length, 'f', 0,
+                msig = mdev_add_output(x->device, map->dest_name, map->dest_length, 'f', 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MIN) ? &map->range.dest_min : 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MAX) ? &map->range.dest_max : 0);
                 // connect the new signal
@@ -599,7 +599,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 props.mode = MO_BYPASS;
                 mapper_monitor_connect(x->monitor, str, map->dest_name, &props, MAPPING_MODE);
                 // add a corresponding hidden input signal for querying
-                snprintf(str, 256, "%s%i", "/~out.", mdev_num_hidden_inputs(x->device));
+                snprintf(str, 256, "%s%s", "/~", map->dest_name);
                 mdev_add_hidden_input(x->device, str, map->dest_length,
                                       map->dest_type, 0, 0, 0,
                                       mapper_query_handler, msig);
@@ -609,11 +609,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 mapper_update_output_vector_positions(x);
 
                 //output numOutputs
-#ifdef MAXMSP
-                atom_setlong(x->buffer, mdev_num_outputs(x->device));
-#else
-                SETFLOAT(x->buffer, (float)mdev_num_outputs(x->device));
-#endif
+                set_int(x->buffer, mdev_num_outputs(x->device));
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
             }
             else if (strcmp(map->dest_name, x->name) == 0) {
@@ -624,8 +620,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 // create a matching input signal
                 mapper_signal msig;
                 char str[256];
-                snprintf(str, 256, "%s%i", "/in.", mdev_num_inputs(x->device));
-                msig = mdev_add_input(x->device, str, map->src_length, 'f', 0,
+                msig = mdev_add_input(x->device, map->src_name, map->src_length, 'f', 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MIN) ? &map->range.src_min : 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MAX) ? &map->range.src_max : 0,
                                       mapper_input_handler, x);
@@ -640,19 +635,51 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 mapper_update_input_vector_positions(x);
                 
                 //output numInputs
-#ifdef MAXMSP
-                atom_setlong(x->buffer, mdev_num_inputs(x->device));
-#else
-                SETFLOAT(x->buffer, (float)mdev_num_inputs(x->device));
-#endif
+                set_int(x->buffer, mdev_num_inputs(x->device));
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
             }
             break;
         }
         case MDB_MODIFY:
             break;
-        case MDB_REMOVE:
+        case MDB_REMOVE: {
+            const char *signal_name;
+            mapper_signal msig;
+            // check if applies to me
+            if (!(osc_prefix_cmp(map->dest_name, mdev_name(x->device), &signal_name))) {
+                if (strcmp(signal_name, "/CONNECT_HERE") == 0)
+                    return;
+                // find corresponding signal
+                if (!(msig = mdev_get_input_by_name(x->device, signal_name, 0))) {
+                    post("error: input signal %s not found!", signal_name);
+                    return;
+                }
+                // remove it
+                mdev_remove_input(x->device, msig);
+                mapper_update_input_vector_positions(x);
+                
+                //output numInputs
+                set_int(x->buffer, mdev_num_inputs(x->device));
+                outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
+            }
+            else if (!(osc_prefix_cmp(map->src_name, mdev_name(x->device), &signal_name))) {
+                if (strcmp(signal_name, "/CONNECT_HERE") == 0)
+                    return;
+                // find corresponding signal
+                if (!(msig = mdev_get_output_by_name(x->device, signal_name, 0))) {
+                    post("error: output signal %s not found", signal_name);
+                    return;
+                }
+                // remove it
+                mdev_remove_output(x->device, msig);
+                mapper_update_output_vector_positions(x);
+                
+                //output numOutputs
+                set_int(x->buffer, mdev_num_outputs(x->device));
+                outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
+            }
             break;
+        }
     }
 }
 
@@ -769,4 +796,33 @@ void set_int(t_atom *argv, int i)
 #else
     SETFLOAT(argv, (float)i);
 #endif
+}
+
+/* Helper function to check if the OSC prefix matches.  Like strcmp(),
+ * returns 0 if they match (up to the second '/'), non-0 otherwise.
+ * Also optionally returns a pointer to the remainder of str1 after
+ * the prefix. */
+static int osc_prefix_cmp(const char *str1, const char *str2,
+                          const char **rest)
+{
+    if (str1[0]!='/') {
+        return 0;
+    }
+    if (str2[0]!='/') {
+        return 0;
+    }
+    
+    // skip first slash
+    const char *s1=str1+1, *s2=str2+1;
+    
+    while (*s1 && (*s1)!='/') s1++;
+    while (*s2 && (*s2)!='/') s2++;
+    
+    int n1 = s1-str1, n2 = s2-str2;
+    if (n1!=n2) return 1;
+    
+    if (rest)
+        *rest = s1;
+    
+    return strncmp(str1, str2, n1);
 }

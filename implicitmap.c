@@ -587,12 +587,18 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                     post("Max outputs reached!");
                     return;
                 }
+                // disconnect the generic signal
+                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
+                
                 // add a matching output signal
                 mapper_signal msig;
                 char str[256];
-                msig = mdev_add_output(x->device, map->dest_name, map->dest_length, 'f', 0,
+                int length = map->dest_length ? : 1;
+                msig = mdev_add_output(x->device, map->dest_name, length, 'f', 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MIN) ? &map->range.dest_min : 0,
                                        (map->range.known | MAPPING_RANGE_DEST_MAX) ? &map->range.dest_max : 0);
+                if (!msig)
+                    return;
                 // connect the new signal
                 msig_full_name(msig, str, 256);
                 mapper_db_mapping_t props;
@@ -603,8 +609,6 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 mdev_add_hidden_input(x->device, str, map->dest_length,
                                       map->dest_type, 0, 0, 0,
                                       mapper_query_handler, msig);
-                // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
                 
                 mapper_update_output_vector_positions(x);
 
@@ -617,20 +621,24 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                     post("Max inputs reached!");
                     return;
                 }
+                // disconnect the generic signal
+                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
+                
                 // create a matching input signal
                 mapper_signal msig;
                 char str[256];
-                msig = mdev_add_input(x->device, map->src_name, map->src_length, 'f', 0,
+                int length = map->src_length ? : 1;
+                msig = mdev_add_input(x->device, map->src_name, length, 'f', 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MIN) ? &map->range.src_min : 0,
                                       (map->range.known | MAPPING_RANGE_SRC_MAX) ? &map->range.src_max : 0,
                                       mapper_input_handler, x);
+                if (!msig)
+                    return;
                 // connect the new signal
                 mapper_db_mapping_t props;
                 props.mode = MO_BYPASS;
                 msig_full_name(msig, str, 256);
                 mapper_monitor_connect(x->monitor, map->src_name, str, &props, MAPPING_MODE);
-                // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
                 
                 mapper_update_input_vector_positions(x);
                 

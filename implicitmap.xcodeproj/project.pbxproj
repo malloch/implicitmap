@@ -7,45 +7,45 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		702522F912BFFE8400BDA3F1 /* mapper_db.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522F612BFFE8400BDA3F1 /* mapper_db.h */; };
-		702522FA12BFFE8400BDA3F1 /* mapper_types.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522F712BFFE8400BDA3F1 /* mapper_types.h */; };
-		702522FB12BFFE8400BDA3F1 /* mapper.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522F812BFFE8400BDA3F1 /* mapper.h */; };
-		702522FF12BFFE9200BDA3F1 /* config.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522FC12BFFE9200BDA3F1 /* config.h */; };
-		7025230012BFFE9200BDA3F1 /* mapper_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522FD12BFFE9200BDA3F1 /* mapper_internal.h */; };
-		7025230112BFFE9200BDA3F1 /* types_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = 702522FE12BFFE9200BDA3F1 /* types_internal.h */; };
-		7025231912BFFEE400BDA3F1 /* admin.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025230E12BFFEE400BDA3F1 /* admin.c */; };
-		7025231A12BFFEE400BDA3F1 /* db.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025230F12BFFEE400BDA3F1 /* db.c */; };
-		7025231B12BFFEE400BDA3F1 /* device.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231012BFFEE400BDA3F1 /* device.c */; };
-		7025231C12BFFEE400BDA3F1 /* expression.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231112BFFEE400BDA3F1 /* expression.c */; };
-		7025231D12BFFEE400BDA3F1 /* mapping.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231212BFFEE400BDA3F1 /* mapping.c */; };
-		7025231F12BFFEE400BDA3F1 /* monitor.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231412BFFEE400BDA3F1 /* monitor.c */; };
-		7025232012BFFEE400BDA3F1 /* params.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231512BFFEE400BDA3F1 /* params.c */; };
-		7025232112BFFEE400BDA3F1 /* router.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231612BFFEE400BDA3F1 /* router.c */; };
-		7025232212BFFEE400BDA3F1 /* signal.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231712BFFEE400BDA3F1 /* signal.c */; };
-		7025232312BFFEE400BDA3F1 /* table.c in Sources */ = {isa = PBXBuildFile; fileRef = 7025231812BFFEE400BDA3F1 /* table.c */; };
 		709BF0331314A74A00F3881F /* implicitmap.c in Sources */ = {isa = PBXBuildFile; fileRef = 709BF0321314A74A00F3881F /* implicitmap.c */; };
+		70A7F7941368EAF200A27DFE /* mapper_db.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F7911368EAF200A27DFE /* mapper_db.h */; };
+		70A7F7951368EAF200A27DFE /* mapper_types.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F7921368EAF200A27DFE /* mapper_types.h */; };
+		70A7F7961368EAF200A27DFE /* mapper.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F7931368EAF200A27DFE /* mapper.h */; };
+		70A7F7A11368EB1200A27DFE /* config.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F79E1368EB1200A27DFE /* config.h */; };
+		70A7F7A21368EB1200A27DFE /* mapper_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F79F1368EB1200A27DFE /* mapper_internal.h */; };
+		70A7F7A31368EB1200A27DFE /* types_internal.h in Headers */ = {isa = PBXBuildFile; fileRef = 70A7F7A01368EB1200A27DFE /* types_internal.h */; };
+		70A7F7B41368EB3000A27DFE /* admin.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AA1368EB3000A27DFE /* admin.c */; };
+		70A7F7B51368EB3000A27DFE /* db.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AB1368EB3000A27DFE /* db.c */; };
+		70A7F7B61368EB3000A27DFE /* device.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AC1368EB3000A27DFE /* device.c */; };
+		70A7F7B71368EB3000A27DFE /* expression.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AD1368EB3000A27DFE /* expression.c */; };
+		70A7F7B81368EB3000A27DFE /* mapping.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AE1368EB3000A27DFE /* mapping.c */; };
+		70A7F7B91368EB3000A27DFE /* monitor.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7AF1368EB3000A27DFE /* monitor.c */; };
+		70A7F7BA1368EB3000A27DFE /* params.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7B01368EB3000A27DFE /* params.c */; };
+		70A7F7BB1368EB3000A27DFE /* router.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7B11368EB3000A27DFE /* router.c */; };
+		70A7F7BC1368EB3000A27DFE /* signal.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7B21368EB3000A27DFE /* signal.c */; };
+		70A7F7BD1368EB3000A27DFE /* table.c in Sources */ = {isa = PBXBuildFile; fileRef = 70A7F7B31368EB3000A27DFE /* table.c */; };
 		8D5B49A804867FD3000E48DA /* InfoPlist.strings in Resources */ = {isa = PBXBuildFile; fileRef = 8D5B49A704867FD3000E48DA /* InfoPlist.strings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
 		089C167EFE841241C02AAC07 /* English */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.strings; name = English; path = English.lproj/InfoPlist.strings; sourceTree = "<group>"; };
-		702522F612BFFE8400BDA3F1 /* mapper_db.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_db.h; path = ../../../libmapper/include/mapper/mapper_db.h; sourceTree = SOURCE_ROOT; };
-		702522F712BFFE8400BDA3F1 /* mapper_types.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_types.h; path = ../../../libmapper/include/mapper/mapper_types.h; sourceTree = SOURCE_ROOT; };
-		702522F812BFFE8400BDA3F1 /* mapper.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper.h; path = ../../../libmapper/include/mapper/mapper.h; sourceTree = SOURCE_ROOT; };
-		702522FC12BFFE9200BDA3F1 /* config.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = config.h; path = ../../../libmapper/src/config.h; sourceTree = SOURCE_ROOT; };
-		702522FD12BFFE9200BDA3F1 /* mapper_internal.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_internal.h; path = ../../../libmapper/src/mapper_internal.h; sourceTree = SOURCE_ROOT; };
-		702522FE12BFFE9200BDA3F1 /* types_internal.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = types_internal.h; path = ../../../libmapper/src/types_internal.h; sourceTree = SOURCE_ROOT; };
-		7025230E12BFFEE400BDA3F1 /* admin.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = admin.c; path = ../../../libmapper/src/admin.c; sourceTree = SOURCE_ROOT; };
-		7025230F12BFFEE400BDA3F1 /* db.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = db.c; path = ../../../libmapper/src/db.c; sourceTree = SOURCE_ROOT; };
-		7025231012BFFEE400BDA3F1 /* device.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = device.c; path = ../../../libmapper/src/device.c; sourceTree = SOURCE_ROOT; };
-		7025231112BFFEE400BDA3F1 /* expression.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = expression.c; path = ../../../libmapper/src/expression.c; sourceTree = SOURCE_ROOT; };
-		7025231212BFFEE400BDA3F1 /* mapping.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = mapping.c; path = ../../../libmapper/src/mapping.c; sourceTree = SOURCE_ROOT; };
-		7025231412BFFEE400BDA3F1 /* monitor.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = monitor.c; path = ../../../libmapper/src/monitor.c; sourceTree = SOURCE_ROOT; };
-		7025231512BFFEE400BDA3F1 /* params.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = params.c; path = ../../../libmapper/src/params.c; sourceTree = SOURCE_ROOT; };
-		7025231612BFFEE400BDA3F1 /* router.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = router.c; path = ../../../libmapper/src/router.c; sourceTree = SOURCE_ROOT; };
-		7025231712BFFEE400BDA3F1 /* signal.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = signal.c; path = ../../../libmapper/src/signal.c; sourceTree = SOURCE_ROOT; };
-		7025231812BFFEE400BDA3F1 /* table.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = table.c; path = ../../../libmapper/src/table.c; sourceTree = SOURCE_ROOT; };
 		709BF0321314A74A00F3881F /* implicitmap.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; path = implicitmap.c; sourceTree = "<group>"; };
+		70A7F7911368EAF200A27DFE /* mapper_db.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_db.h; path = ../libmapper/include/mapper/mapper_db.h; sourceTree = SOURCE_ROOT; };
+		70A7F7921368EAF200A27DFE /* mapper_types.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_types.h; path = ../libmapper/include/mapper/mapper_types.h; sourceTree = SOURCE_ROOT; };
+		70A7F7931368EAF200A27DFE /* mapper.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper.h; path = ../libmapper/include/mapper/mapper.h; sourceTree = SOURCE_ROOT; };
+		70A7F79E1368EB1200A27DFE /* config.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = config.h; path = ../libmapper/src/config.h; sourceTree = SOURCE_ROOT; };
+		70A7F79F1368EB1200A27DFE /* mapper_internal.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = mapper_internal.h; path = ../libmapper/src/mapper_internal.h; sourceTree = SOURCE_ROOT; };
+		70A7F7A01368EB1200A27DFE /* types_internal.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; name = types_internal.h; path = ../libmapper/src/types_internal.h; sourceTree = SOURCE_ROOT; };
+		70A7F7AA1368EB3000A27DFE /* admin.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = admin.c; path = ../libmapper/src/admin.c; sourceTree = SOURCE_ROOT; };
+		70A7F7AB1368EB3000A27DFE /* db.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = db.c; path = ../libmapper/src/db.c; sourceTree = SOURCE_ROOT; };
+		70A7F7AC1368EB3000A27DFE /* device.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = device.c; path = ../libmapper/src/device.c; sourceTree = SOURCE_ROOT; };
+		70A7F7AD1368EB3000A27DFE /* expression.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = expression.c; path = ../libmapper/src/expression.c; sourceTree = SOURCE_ROOT; };
+		70A7F7AE1368EB3000A27DFE /* mapping.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = mapping.c; path = ../libmapper/src/mapping.c; sourceTree = SOURCE_ROOT; };
+		70A7F7AF1368EB3000A27DFE /* monitor.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = monitor.c; path = ../libmapper/src/monitor.c; sourceTree = SOURCE_ROOT; };
+		70A7F7B01368EB3000A27DFE /* params.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = params.c; path = ../libmapper/src/params.c; sourceTree = SOURCE_ROOT; };
+		70A7F7B11368EB3000A27DFE /* router.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = router.c; path = ../libmapper/src/router.c; sourceTree = SOURCE_ROOT; };
+		70A7F7B21368EB3000A27DFE /* signal.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = signal.c; path = ../libmapper/src/signal.c; sourceTree = SOURCE_ROOT; };
+		70A7F7B31368EB3000A27DFE /* table.c */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.c; name = table.c; path = ../libmapper/src/table.c; sourceTree = SOURCE_ROOT; };
 		8D576316048677EA00EA77CD /* implicitmap.mxo */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = implicitmap.mxo; sourceTree = BUILT_PRODUCTS_DIR; };
 		8D576317048677EA00EA77CD /* Info.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -109,16 +109,16 @@
 		70DBCB4D12231900003B0196 /* src */ = {
 			isa = PBXGroup;
 			children = (
-				7025230E12BFFEE400BDA3F1 /* admin.c */,
-				7025230F12BFFEE400BDA3F1 /* db.c */,
-				7025231012BFFEE400BDA3F1 /* device.c */,
-				7025231112BFFEE400BDA3F1 /* expression.c */,
-				7025231212BFFEE400BDA3F1 /* mapping.c */,
-				7025231412BFFEE400BDA3F1 /* monitor.c */,
-				7025231512BFFEE400BDA3F1 /* params.c */,
-				7025231612BFFEE400BDA3F1 /* router.c */,
-				7025231712BFFEE400BDA3F1 /* signal.c */,
-				7025231812BFFEE400BDA3F1 /* table.c */,
+				70A7F7AA1368EB3000A27DFE /* admin.c */,
+				70A7F7AB1368EB3000A27DFE /* db.c */,
+				70A7F7AC1368EB3000A27DFE /* device.c */,
+				70A7F7AD1368EB3000A27DFE /* expression.c */,
+				70A7F7AE1368EB3000A27DFE /* mapping.c */,
+				70A7F7AF1368EB3000A27DFE /* monitor.c */,
+				70A7F7B01368EB3000A27DFE /* params.c */,
+				70A7F7B11368EB3000A27DFE /* router.c */,
+				70A7F7B21368EB3000A27DFE /* signal.c */,
+				70A7F7B31368EB3000A27DFE /* table.c */,
 			);
 			name = src;
 			sourceTree = "<group>";
@@ -126,12 +126,12 @@
 		70DBCB651223198A003B0196 /* include */ = {
 			isa = PBXGroup;
 			children = (
-				702522F612BFFE8400BDA3F1 /* mapper_db.h */,
-				702522F712BFFE8400BDA3F1 /* mapper_types.h */,
-				702522F812BFFE8400BDA3F1 /* mapper.h */,
-				702522FC12BFFE9200BDA3F1 /* config.h */,
-				702522FD12BFFE9200BDA3F1 /* mapper_internal.h */,
-				702522FE12BFFE9200BDA3F1 /* types_internal.h */,
+				70A7F7911368EAF200A27DFE /* mapper_db.h */,
+				70A7F7921368EAF200A27DFE /* mapper_types.h */,
+				70A7F7931368EAF200A27DFE /* mapper.h */,
+				70A7F79E1368EB1200A27DFE /* config.h */,
+				70A7F79F1368EB1200A27DFE /* mapper_internal.h */,
+				70A7F7A01368EB1200A27DFE /* types_internal.h */,
 			);
 			name = include;
 			sourceTree = "<group>";
@@ -143,12 +143,12 @@
 			isa = PBXHeadersBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				702522F912BFFE8400BDA3F1 /* mapper_db.h in Headers */,
-				702522FA12BFFE8400BDA3F1 /* mapper_types.h in Headers */,
-				702522FB12BFFE8400BDA3F1 /* mapper.h in Headers */,
-				702522FF12BFFE9200BDA3F1 /* config.h in Headers */,
-				7025230012BFFE9200BDA3F1 /* mapper_internal.h in Headers */,
-				7025230112BFFE9200BDA3F1 /* types_internal.h in Headers */,
+				70A7F7941368EAF200A27DFE /* mapper_db.h in Headers */,
+				70A7F7951368EAF200A27DFE /* mapper_types.h in Headers */,
+				70A7F7961368EAF200A27DFE /* mapper.h in Headers */,
+				70A7F7A11368EB1200A27DFE /* config.h in Headers */,
+				70A7F7A21368EB1200A27DFE /* mapper_internal.h in Headers */,
+				70A7F7A31368EB1200A27DFE /* types_internal.h in Headers */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -214,17 +214,17 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				7025231912BFFEE400BDA3F1 /* admin.c in Sources */,
-				7025231A12BFFEE400BDA3F1 /* db.c in Sources */,
-				7025231B12BFFEE400BDA3F1 /* device.c in Sources */,
-				7025231C12BFFEE400BDA3F1 /* expression.c in Sources */,
-				7025231D12BFFEE400BDA3F1 /* mapping.c in Sources */,
-				7025231F12BFFEE400BDA3F1 /* monitor.c in Sources */,
-				7025232012BFFEE400BDA3F1 /* params.c in Sources */,
-				7025232112BFFEE400BDA3F1 /* router.c in Sources */,
-				7025232212BFFEE400BDA3F1 /* signal.c in Sources */,
-				7025232312BFFEE400BDA3F1 /* table.c in Sources */,
 				709BF0331314A74A00F3881F /* implicitmap.c in Sources */,
+				70A7F7B41368EB3000A27DFE /* admin.c in Sources */,
+				70A7F7B51368EB3000A27DFE /* db.c in Sources */,
+				70A7F7B61368EB3000A27DFE /* device.c in Sources */,
+				70A7F7B71368EB3000A27DFE /* expression.c in Sources */,
+				70A7F7B81368EB3000A27DFE /* mapping.c in Sources */,
+				70A7F7B91368EB3000A27DFE /* monitor.c in Sources */,
+				70A7F7BA1368EB3000A27DFE /* params.c in Sources */,
+				70A7F7BB1368EB3000A27DFE /* router.c in Sources */,
+				70A7F7BC1368EB3000A27DFE /* signal.c in Sources */,
+				70A7F7BD1368EB3000A27DFE /* table.c in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

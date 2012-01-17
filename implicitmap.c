@@ -746,6 +746,7 @@ int mapper_setup_mapper(t_mapper *x)
     x->monitor = mapper_monitor_new();
     if (!x->monitor)
         return 1;
+    mapper_monitor_autorequest(x->monitor, 0);
     
     x->address = lo_address_new_from_url("osc.udp://224.0.1.3:7570");
     lo_address_set_ttl(x->address, 1);

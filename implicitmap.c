@@ -43,7 +43,8 @@
 #else
     #include "m_pd.h"
 #endif
-#include <mapper/mapper.h>
+#include "mapper/mapper.h"
+#include "mapper/mapper_db.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -102,7 +103,7 @@ void mapper_snapshot_timeout(t_mapper *x);
 void mapper_randomize(t_mapper *x);
 void mapper_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 void mapper_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
-void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *user);
+void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
 void mapper_print_properties(t_mapper *x);
 int mapper_setup_mapper(t_mapper *x);
 void mapper_snapshot(t_mapper *x);   
@@ -252,7 +253,7 @@ void mapper_free(t_mapper *x)
         post("ok");
     }
     if (x->db) {
-        mapper_db_remove_mapping_callback(x->db, mapper_connect_handler, x);
+        mapper_db_remove_connection_callback(x->db, mapper_connect_handler, x);
     }
     if (x->monitor) {
         post("Freeing monitor...");
@@ -567,7 +568,7 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
     
 // *********************************************************
 // -(link handler)------------------------------------------
-void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *user)
+void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user)
 {
     // if connected involves current generic signal, create a new generic signal
     t_mapper *x = user;
@@ -582,32 +583,32 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
     switch (a) {
         case MDB_NEW: {
             // check if applies to me
-            if (strcmp(map->src_name, x->name) == 0) {
+            if (strcmp(con->src_name, x->name) == 0) {
                 if (mdev_num_outputs(x->device) >= MAX_LIST) {
                     post("Max outputs reached!");
                     return;
                 }
                 // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
+                mapper_monitor_disconnect(x->monitor, con->src_name, con->dest_name);
                 
                 // add a matching output signal
                 mapper_signal msig;
                 char str[256];
-                int length = map->dest_length ? : 1;
-                msig = mdev_add_output(x->device, map->dest_name, length, 'f', 0,
-                                       (map->range.known | MAPPING_RANGE_DEST_MIN) ? &map->range.dest_min : 0,
-                                       (map->range.known | MAPPING_RANGE_DEST_MAX) ? &map->range.dest_max : 0);
+                int length = con->dest_length ? : 1;
+                msig = mdev_add_output(x->device, con->dest_name, length, 'f', 0,
+                                       (con->range.known | CONNECTION_RANGE_DEST_MIN) ? &con->range.dest_min : 0,
+                                       (con->range.known | CONNECTION_RANGE_DEST_MAX) ? &con->range.dest_max : 0);
                 if (!msig)
                     return;
                 // connect the new signal
                 msig_full_name(msig, str, 256);
-                mapper_db_mapping_t props;
+                mapper_db_connection_t props;
                 props.mode = MO_BYPASS;
-                mapper_monitor_connect(x->monitor, str, map->dest_name, &props, MAPPING_MODE);
+                mapper_monitor_connect(x->monitor, str, con->dest_name, &props, CONNECTION_MODE);
                 // add a corresponding hidden input signal for querying
-                snprintf(str, 256, "%s%s", "/~", map->dest_name);
-                mdev_add_hidden_input(x->device, str, map->dest_length,
-                                      map->dest_type, 0, 0, 0,
+                snprintf(str, 256, "%s%s", "/~", con->dest_name);
+                mdev_add_hidden_input(x->device, str, con->dest_length,
+                                      con->dest_type, 0, 0, 0,
                                       mapper_query_handler, msig);
                 
                 mapper_update_output_vector_positions(x);
@@ -616,29 +617,29 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 set_int(x->buffer, mdev_num_outputs(x->device));
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
             }
-            else if (strcmp(map->dest_name, x->name) == 0) {
+            else if (strcmp(con->dest_name, x->name) == 0) {
                 if (mdev_num_inputs(x->device) >= MAX_LIST) {
                     post("Max inputs reached!");
                     return;
                 }
                 // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, map->src_name, map->dest_name);
+                mapper_monitor_disconnect(x->monitor, con->src_name, con->dest_name);
                 
                 // create a matching input signal
                 mapper_signal msig;
                 char str[256];
-                int length = map->src_length ? : 1;
-                msig = mdev_add_input(x->device, map->src_name, length, 'f', 0,
-                                      (map->range.known | MAPPING_RANGE_SRC_MIN) ? &map->range.src_min : 0,
-                                      (map->range.known | MAPPING_RANGE_SRC_MAX) ? &map->range.src_max : 0,
+                int length = con->src_length ? : 1;
+                msig = mdev_add_input(x->device, con->src_name, length, 'f', 0,
+                                      (con->range.known | CONNECTION_RANGE_SRC_MIN) ? &con->range.src_min : 0,
+                                      (con->range.known | CONNECTION_RANGE_SRC_MAX) ? &con->range.src_max : 0,
                                       mapper_input_handler, x);
                 if (!msig)
                     return;
                 // connect the new signal
-                mapper_db_mapping_t props;
+                mapper_db_connection_t props;
                 props.mode = MO_BYPASS;
                 msig_full_name(msig, str, 256);
-                mapper_monitor_connect(x->monitor, map->src_name, str, &props, MAPPING_MODE);
+                mapper_monitor_connect(x->monitor, con->src_name, str, &props, CONNECTION_MODE);
                 
                 mapper_update_input_vector_positions(x);
                 
@@ -654,7 +655,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
             const char *signal_name;
             mapper_signal msig;
             // check if applies to me
-            if (!(osc_prefix_cmp(map->dest_name, mdev_name(x->device), &signal_name))) {
+            if (!(osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name))) {
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
                     return;
                 // find corresponding signal
@@ -670,7 +671,7 @@ void mapper_connect_handler(mapper_db_mapping map, mapper_db_action_t a, void *u
                 set_int(x->buffer, mdev_num_inputs(x->device));
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
             }
-            else if (!(osc_prefix_cmp(map->src_name, mdev_name(x->device), &signal_name))) {
+            else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
                     return;
                 // find corresponding signal
@@ -750,7 +751,7 @@ int mapper_setup_mapper(t_mapper *x)
     lo_address_set_ttl(x->address, 1);
     
     x->db = mapper_monitor_get_db(x->monitor);
-    mapper_db_add_mapping_callback(x->db, mapper_connect_handler, x);
+    mapper_db_add_connection_callback(x->db, mapper_connect_handler, x);
     
     mapper_print_properties(x);
     

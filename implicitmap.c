@@ -579,10 +579,13 @@ void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
         post("error in connect handler: device not ready");
         return;
     }
+    const char *signal_name;
     switch (a) {
         case MDB_NEW: {
             // check if applies to me
-            if (strcmp(con->src_name, x->name) == 0) {
+            if (!osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name)) {
+                if (strcmp(signal_name, con->dest_name) == 0)
+                    return;
                 if (mdev_num_outputs(x->device) >= MAX_LIST) {
                     post("Max outputs reached!");
                     return;
@@ -597,8 +600,10 @@ void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
                 msig = mdev_add_output(x->device, con->dest_name, length, 'f', 0,
                                        (con->range.known | CONNECTION_RANGE_DEST_MIN) ? &con->range.dest_min : 0,
                                        (con->range.known | CONNECTION_RANGE_DEST_MAX) ? &con->range.dest_max : 0);
-                if (!msig)
+                if (!msig) {
+                    post("msig doesn't exist!");
                     return;
+                }
                 // connect the new signal
                 msig_full_name(msig, str, 256);
                 mapper_db_connection_t props;
@@ -616,7 +621,9 @@ void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
                 set_int(x->buffer, mdev_num_outputs(x->device));
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
             }
-            else if (strcmp(con->dest_name, x->name) == 0) {
+            else if (!osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name)) {
+                if (strcmp(signal_name, con->src_name) == 0)
+                    return;
                 if (mdev_num_inputs(x->device) >= MAX_LIST) {
                     post("Max inputs reached!");
                     return;
@@ -651,11 +658,12 @@ void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
         case MDB_MODIFY:
             break;
         case MDB_REMOVE: {
-            const char *signal_name;
             mapper_signal msig;
             // check if applies to me
             if (!(osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name))) {
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
+                    return;
+                if (strcmp(signal_name, con->src_name) != 0)
                     return;
                 // find corresponding signal
                 if (!(msig = mdev_get_input_by_name(x->device, signal_name, 0))) {
@@ -672,6 +680,8 @@ void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
             }
             else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
+                    return;
+                if (strcmp(signal_name, con->dest_name) != 0)
                     return;
                 // find corresponding signal
                 if (!(msig = mdev_get_output_by_name(x->device, signal_name, 0))) {
@@ -771,9 +781,7 @@ void mapper_poll(t_mapper *x)
     if (!x->ready) {
         if (mdev_ready(x->device)) {
             x->ready = 1;
-            
-            snprintf(x->name, 128, "%s%s", mdev_name(x->device), "/CONNECT_HERE");
-            
+                        
             // create a new generic output signal
             mdev_add_output(x->device, "/CONNECT_HERE", 1, 'f', 0, 0, 0);
             

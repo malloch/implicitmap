@@ -74,6 +74,7 @@ typedef struct _mapper
     void *clock;          // pointer to clock object
     void *timeout;
     char name[128];
+    mapper_admin admin;
     mapper_device device;
     mapper_monitor monitor;
     lo_address address;
@@ -248,20 +249,19 @@ void mapper_free(t_mapper *x)
     clock_free(x->clock);     // Frees memeory used by clock
     
     if (x->device) {
-        post("Freeing device %s...", mdev_name(x->device));
         mdev_free(x->device);
-        post("ok");
     }
     if (x->db) {
         mapper_db_remove_connection_callback(x->db, mapper_connect_handler, x);
     }
     if (x->monitor) {
-        post("Freeing monitor...");
         mapper_monitor_free(x->monitor);
-        post("ok");
     }
     if (x->address) {
         lo_address_free(x->address);
+    }
+    if (x->admin) {
+        mapper_admin_free(x->admin);
     }
 }
 
@@ -518,7 +518,6 @@ void update_vector(t_mapper *x)
 // -(query handler)-----------------------------------------
 void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, mapper_timetag_t *time, void *value)
 {
-    post("query handler: %s", remote_props->name);
     mapper_signal local_sig = (mapper_signal) remote_props->user_data;
 
     mapper_db_signal local_props = msig_properties(local_sig);
@@ -735,18 +734,22 @@ void mapper_update_output_vector_positions(t_mapper *x)
 int mapper_setup_mapper(t_mapper *x)
 {
     post("using name: %s", x->name);
+    x->admin = 0;
     x->device = 0;
     x->monitor = 0;
     x->db = 0;
+
+    x->admin = mapper_admin_new(0, 0, 0);
+    if (!x->admin)
+        return 1;
     
-    x->device = mdev_new(x->name, port, 0);
+    x->device = mdev_new(x->name, port, x->admin);
     if (!x->device)
         return 1;
-    
-    x->monitor = mapper_monitor_new();
+        
+    x->monitor = mapper_monitor_new(x->admin, 0);
     if (!x->monitor)
         return 1;
-    mapper_monitor_autorequest(x->monitor, 0);
     
     x->address = lo_address_new_from_url("osc.udp://224.0.1.3:7570");
     lo_address_set_ttl(x->address, 1);

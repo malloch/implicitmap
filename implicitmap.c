@@ -513,7 +513,7 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
     }
     int j;
         
-    for (j = 0; j < local_props->length; j++) {
+    for (j = 0; j < remote_props->length; j++) {
         if (!value) {
 #ifdef MAXMSP
             atom_setfloat(x->buffer_out+ref->offset+j, 0);

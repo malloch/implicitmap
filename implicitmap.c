@@ -538,7 +538,7 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
             SETFLOAT(x->buffer_out+ref->offset+j, 0);
 #endif
         }
-        else if (local_props->type == 'f') {
+        else if (remote_props->type == 'f') {
             float *f = value;
 #ifdef MAXMSP
             atom_setfloat(x->buffer_out+ref->offset+j, f[j]);
@@ -546,7 +546,7 @@ void mapper_query_handler(mapper_signal remote_sig, mapper_db_signal remote_prop
             SETFLOAT(x->buffer_out+ref->offset+j, f[j]);
 #endif
         }
-        else if (local_props->type == 'i') {
+        else if (remote_props->type == 'i') {
             int *i = value;
 #ifdef MAXMSP
             atom_setfloat(x->buffer_out+ref->offset+j, (float)i[j]);

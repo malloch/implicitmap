@@ -127,10 +127,10 @@ int main(void)
         return 0;
     }
 #else
-    int mapper_setup(void)
+    int implicitmap_setup(void)
     {
         t_class *c;
-        c = class_new(gensym("mapper"), (t_newmethod)mapper_new, (t_method)mapper_free, 
+        c = class_new(gensym("implicitmap"), (t_newmethod)mapper_new, (t_method)mapper_free, 
                       (long)sizeof(t_mapper), 0L, A_GIMME, 0);        
         class_addmethod(c,   (t_method)mapper_snapshot,         gensym("snapshot"),  A_GIMME, 0);
         class_addmethod(c,   (t_method)mapper_randomize,        gensym("randomize"), A_GIMME, 0);

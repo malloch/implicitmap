@@ -11,23 +11,6 @@
 // General License version 2.1 or later.  Please see COPYING for details.
 // 
 
-// notes:
-// declare one generic input, one generic output
-// when receiving mapping command, should create new signal for mapping, with
-// matching name and properties
-// user input: snapshots, train, some training variables
-// will have to listen for signal requests and declare an extra one (monitor functionality)
-// 
-// listen for signal request
-//      if received, declare real signals and then one more generic
-// listen for mapping request
-//      if for generic signal OR existing signal
-//          create new signal to match other end, map
-//      if for output mapping, also create matching inputs
-// listen for mapping destruction, destroy signal if necessary
-// snapshot command
-
-
 #ifndef PD
 #define MAXMSP
 #endif

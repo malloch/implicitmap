@@ -74,39 +74,39 @@ typedef struct _mapper
     t_signal_ref signals_out[MAX_LIST];
 } t_mapper;
 
-t_symbol *ps_list;
-int port = 9000;
+static t_symbol *ps_list;
+static int port = 9000;
 
 // *********************************************************
 // -(function prototypes)-----------------------------------
-void *mapper_new(t_symbol *s, int argc, t_atom *argv);
-void mapper_free(t_mapper *x);
-void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
-void mapper_poll(t_mapper *x);
-void mapper_snapshot_timeout(t_mapper *x);
-void mapper_randomize(t_mapper *x);
-void mapper_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
-void mapper_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
-void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
-void mapper_print_properties(t_mapper *x);
-int mapper_setup_mapper(t_mapper *x);
-void mapper_snapshot(t_mapper *x);   
+static void *mapper_new(t_symbol *s, int argc, t_atom *argv);
+static void mapper_free(t_mapper *x);
+static void mapper_list(t_mapper *x, t_symbol *s, int argc, t_atom *argv);
+static void mapper_poll(t_mapper *x);
+static void mapper_snapshot_timeout(t_mapper *x);
+static void mapper_randomize(t_mapper *x);
+static void mapper_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
+static void mapper_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
+static void mapper_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
+static void mapper_print_properties(t_mapper *x);
+static int mapper_setup_mapper(t_mapper *x);
+static void mapper_snapshot(t_mapper *x);   
 #ifdef MAXMSP
     void mapper_assist(t_mapper *x, void *b, long m, long a, char *s);
 #endif
-void add_input(t_mapper *x);
-void add_output(t_mapper *x);
-int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length);
-int mapper_find_ordinal(const char *str);
-void mapper_update_input_vector_positions(t_mapper *x);
-void mapper_update_output_vector_positions(t_mapper *x);
-void set_sym(t_atom *argv, char *sym);
-void set_int(t_atom *argv, int i);
+static void add_input(t_mapper *x);
+static void add_output(t_mapper *x);
+static int mapper_pack_signal_value(mapper_signal sig, t_atom *buffer, int max_length);
+static int mapper_find_ordinal(const char *str);
+static void mapper_update_input_vector_positions(t_mapper *x);
+static void mapper_update_output_vector_positions(t_mapper *x);
+static void set_sym(t_atom *argv, char *sym);
+static void set_int(t_atom *argv, int i);
 static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
-void *mapper_class;
+static void *mapper_class;
 
 // *********************************************************
 // -(main)--------------------------------------------------

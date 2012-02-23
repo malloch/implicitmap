@@ -21,6 +21,7 @@
     #include "jpatcher_api.h"
 #else
     #include "m_pd.h"
+    #define A_SYM A_SYMBOL
 #endif
 #include "mapper/mapper.h"
 #include "mapper/mapper_db.h"
@@ -52,7 +53,7 @@ typedef struct _implicitmap
     void *outlet3;
     void *clock;          // pointer to clock object
     void *timeout;
-    char name[128];
+    char *name;
     mapper_admin admin;
     mapper_device device;
     mapper_monitor monitor;
@@ -84,15 +85,18 @@ static void implicitmap_input_handler(mapper_signal msig, mapper_db_signal props
 static void implicitmap_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 static void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
 static void implicitmap_print_properties(t_implicitmap *x);
-static int implicitmap_setup_mapper(t_implicitmap *x);
+static int implicitmap_setup_mapper(t_implicitmap *x, const char *iface);
 static void implicitmap_snapshot(t_implicitmap *x);   
 #ifdef MAXMSP
     void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s);
 #endif
 static void implicitmap_update_input_vector_positions(t_implicitmap *x);
 static void implicitmap_update_output_vector_positions(t_implicitmap *x);
-static void set_sym(t_atom *argv, char *sym);
-static void set_int(t_atom *argv, int i);
+static const char *maxpd_atom_get_string(t_atom *a);
+static void maxpd_atom_set_string(t_atom *a, const char *string);
+static void maxpd_atom_set_int(t_atom *a, int i);
+static double maxpd_atom_get_float(t_atom *a);
+static void maxpd_atom_set_float(t_atom *a, float d);
 static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
@@ -139,48 +143,45 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
 {
     t_implicitmap *x = NULL;
     long i;
-    char alias[128];
-    
-    strncpy(alias, "implicitmap", 128);
-    
+    const char *alias = NULL;
+    const char *iface = NULL;
+
 #ifdef MAXMSP
     if (x = object_alloc(mapper_class)) {
         x->outlet3 = listout((t_object *)x);
         x->outlet2 = listout((t_object *)x);
         x->outlet1 = listout((t_object *)x);
-        
-        for (i = 0; i < argc; i++) {
-            if ((argv + i)->a_type == A_SYM) {
-                if(strcmp(atom_getsym(argv+i)->s_name, "@alias") == 0) {
-                    if ((argv+i+1)->a_type == A_SYM) {
-                        strncpy(alias, atom_getsym(argv+i+1)->s_name, 128);
-                    }
-                }
-            }
-        }
 #else
     if (x = (t_implicitmap *) pd_new(mapper_class) ) {
         x->outlet1 = outlet_new(&x->ob, gensym("list"));
         x->outlet2 = outlet_new(&x->ob, gensym("list"));
         x->outlet3 = outlet_new(&x->ob, gensym("list"));
-        
+#endif
+        x->name = strdup("implicitmap");
         for (i = 0; i < argc; i++) {
-            if ((argv+i)->a_type == A_SYMBOL) {
-                if(strcmp((argv+i)->a_w.w_symbol->s_name, "@alias") == 0) {
-                    if ((argv+i+1)->a_type == A_SYMBOL) {
-                        strncpy(alias, (argv+i+1)->a_w.w_symbol->s_name, 128);
+            if ((argv + i)->a_type == A_SYM) {
+                if(strcmp(maxpd_atom_get_string(argv+i), "@alias") == 0) {
+                    if ((argv+i+1)->a_type == A_SYM) {
+                        alias = maxpd_atom_get_string(argv+i+1);
+                        i++;
+                    }
+                }
+                else if(strcmp(maxpd_atom_get_string(argv+i), "@interface") == 0) {
+                    if ((argv+i+1)->a_type == A_SYM) {
+                        iface = maxpd_atom_get_string(argv+i+1);
+                        i++;
                     }
                 }
             }
         }
-#endif
-        if (alias[0] == '/') {
-            (*alias)++;
+
+        if (alias) {
+            free(x->name);
+            x->name = *alias == '/' ? strdup(alias+1) : strdup(alias);
         }
-        strncpy(x->name, alias, 128);
-        
-        if (implicitmap_setup_mapper(x)) {
-            post("Error initializing.");
+
+        if (implicitmap_setup_mapper(x, iface)) {
+            post("implcitmap: Error initializing.");
         }
         else {
             x->ready = 0;
@@ -188,20 +189,13 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
             x->query_count = 0;
             // initialize input and output buffers
             for (i = 0; i < MAX_LIST; i++) {
-#ifdef MAXMSP
-                atom_setfloat(x->buffer_in+i, 0);
-                atom_setfloat(x->buffer_out+i, 0);
-#else
-                SETFLOAT(x->buffer_in+i, 0);
-                SETFLOAT(x->buffer_out+i, 0);
-#endif
+                maxpd_atom_set_float(x->buffer_in+i, 0);
+                maxpd_atom_set_float(x->buffer_out+i, 0);
                 x->signals_in[i].x = x;
                 x->signals_out[i].x = x;
             }
-            
             x->size_in = 0;
             x->size_out = 0;
-                        
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)implicitmap_poll);    // Create the timing clock
             x->timeout = clock_new(x, (method)implicitmap_snapshot_timeout);
@@ -219,9 +213,10 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
 // -(free)--------------------------------------------------
 void implicitmap_free(t_implicitmap *x)
 {
-    clock_unset(x->clock);    // Remove clock routine from the scheduler
-    clock_free(x->clock);     // Frees memory used by clock
-    
+    if (x->clock) {
+        clock_unset(x->clock);    // Remove clock routine from the scheduler
+        clock_free(x->clock);     // Frees memory used by clock
+    }
     if (x->device) {
         mdev_free(x->device);
     }
@@ -234,6 +229,9 @@ void implicitmap_free(t_implicitmap *x)
     if (x->admin) {
         mapper_admin_free(x->admin);
     }
+    if (x->name) {
+        free(x->name);
+    }
 }
 
 // *********************************************************
@@ -242,30 +240,30 @@ void implicitmap_print_properties(t_implicitmap *x)
 {    
     if (x->ready) {        
         //output name
-        set_sym(&x->msg_buffer, (char *)mdev_name(x->device));
+        maxpd_atom_set_string(&x->msg_buffer, mdev_name(x->device));
         outlet_anything(x->outlet3, gensym("name"), 1, &x->msg_buffer);
-        
+
         //output interface
-        set_sym(&x->msg_buffer, (char *)mdev_interface(x->device));
+        maxpd_atom_set_string(&x->msg_buffer, (char *)mdev_interface(x->device));
         outlet_anything(x->outlet3, gensym("interface"), 1, &x->msg_buffer);
-        
+
         //output IP
         const struct in_addr *ip = mdev_ip4(x->device);
         if (ip) {
-            set_sym(&x->msg_buffer, inet_ntoa(*ip));
+            maxpd_atom_set_string(&x->msg_buffer, inet_ntoa(*ip));
             outlet_anything(x->outlet2, gensym("IP"), 1, &x->msg_buffer);
         }
-        
+
         //output port
-        set_int(&x->msg_buffer, mdev_port(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mdev_port(x->device));
         outlet_anything(x->outlet3, gensym("port"), 1, &x->msg_buffer);
-        
+
         //output numInputs
-        set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
         outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
-        
+
         //output numOutputs
-        set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
         outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
     }
 }
@@ -322,25 +320,13 @@ void implicitmap_snapshot(t_implicitmap *x)
             t_signal_ref *ref = props->user_data;
             for (j=0; j < props->length; j++) {
                 if (!value) {
-#ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+ref->offset+j, 0);
-#else
-                    SETFLOAT(x->buffer_in+ref->offset+j, 0);
-#endif
+                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, 0);
                 }
                 else if (props->type == 'f') {
-#ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+ref->offset+j, (value+j)->f);
-#else
-                    SETFLOAT(x->buffer_in+ref->offset+j, (value+j)->f);
-#endif
+                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, (value+j)->f);
                 }
                 else if (props->type == 'i') {
-#ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
-#else
-                    SETFLOAT(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
-#endif
+                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
                 }
             }
         }
@@ -384,11 +370,7 @@ void implicitmap_randomize(t_implicitmap *x)
                         // if ranges have not been declared, assume normalized between 0 and 1
                         v[j] = rand_val;
                     }
-#ifdef MAXMSP
-                    atom_setfloat(x->buffer_out+ref->offset+j, v[j]);
-#else
-                    SETFLOAT(x->buffer_out+ref->offset+j, v[j]);
-#endif
+                    maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
                 }
                 msig_update(psig[i], v);
             }
@@ -403,11 +385,7 @@ void implicitmap_randomize(t_implicitmap *x)
                         // if ranges have not been declared, assume normalized between 0 and 1
                         v[j] = (int) rand_val;
                     }
-#ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+ref->offset+j, v[j]);
-#else
-                    SETFLOAT(x->buffer_in+ref->offset+j, v[j]);
-#endif
+                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, v[j]);
                 }
                 msig_update(psig[i], v);
             }
@@ -465,27 +443,15 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper
             break;
         }
         if (!value) {
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_in+ref->offset+j, 0);
-#else
-            SETFLOAT(x->buffer_in+ref->offset+j, 0);
-#endif
+            maxpd_atom_set_float(x->buffer_in+ref->offset+j, 0);
         }
         else if (props->type == 'f') {
             float *f = value;
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_in+ref->offset+j, f[j]);
-#else
-            SETFLOAT(x->buffer_in+ref->offset+j, f[j]);
-#endif
+            maxpd_atom_set_float(x->buffer_in+ref->offset+j, f[j]);
         }
         else if (props->type == 'i') {
             int *i = value;
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_in+ref->offset+j, (float)i[j]);
-#else
-            SETFLOAT(x->buffer_in+ref->offset+j, (float)i[j]);
-#endif
+            maxpd_atom_set_float(x->buffer_in+ref->offset+j, (float)i[j]);
         }
     }
     x->new_in = 1;
@@ -513,27 +479,15 @@ void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote
             break;
         }
         if (!value) {
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_out+ref->offset+j, 0);
-#else
-            SETFLOAT(x->buffer_out+ref->offset+j, 0);
-#endif
+            maxpd_atom_set_float(x->buffer_out+ref->offset+j, 0);
         }
         else if (remote_props->type == 'f') {
             float *f = value;
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_out+ref->offset+j, f[j]);
-#else
-            SETFLOAT(x->buffer_out+ref->offset+j, f[j]);
-#endif
+            maxpd_atom_set_float(x->buffer_out+ref->offset+j, f[j]);
         }
         else if (remote_props->type == 'i') {
             int *i = value;
-#ifdef MAXMSP
-            atom_setfloat(x->buffer_out+ref->offset+j, (float)i[j]);
-#else
-            SETFLOAT(x->buffer_out+ref->offset+j, (float)i[j]);
-#endif
+            maxpd_atom_set_float(x->buffer_out+ref->offset+j, (float)i[j]);
         }
     }
 
@@ -599,7 +553,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
 
                 //output numOutputs
-                set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             else if (!osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name)) {
@@ -631,7 +585,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
                 
                 //output numInputs
-                set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             break;
@@ -656,7 +610,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
                 
                 //output numInputs
-                set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
@@ -674,7 +628,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
                 
                 //output numOutputs
-                set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             break;
@@ -750,7 +704,7 @@ void implicitmap_update_output_vector_positions(t_implicitmap *x)
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
-int implicitmap_setup_mapper(t_implicitmap *x)
+int implicitmap_setup_mapper(t_implicitmap *x, const char *iface)
 {
     post("using name: %s", x->name);
     x->admin = 0;
@@ -758,7 +712,7 @@ int implicitmap_setup_mapper(t_implicitmap *x)
     x->monitor = 0;
     x->db = 0;
 
-    x->admin = mapper_admin_new(0, 0, 0);
+    x->admin = mapper_admin_new(iface, 0, 0);
     if (!x->admin)
         return 1;
     
@@ -805,24 +759,47 @@ void implicitmap_poll(t_implicitmap *x)
 }
 
 // *********************************************************
-// -(helper function for set symbol to atom)----------------
-void set_sym(t_atom *argv, char *sym)
+// some helper functions for abtracting differences
+// between maxmsp and puredata 
+
+const char *maxpd_atom_get_string(t_atom *a)
 {
 #ifdef MAXMSP
-    atom_setsym(argv, gensym(sym));
+    return atom_getsym(a)->s_name;
 #else
-    SETSYMBOL(argv, gensym(sym));
+    return (a)->a_w.w_symbol->s_name;
 #endif
 }
 
-// *********************************************************
-// -(helper function for set int to atom)-------------------
-void set_int(t_atom *argv, int i)
+void maxpd_atom_set_string(t_atom *a, const char *string)
 {
 #ifdef MAXMSP
-    atom_setlong(argv, (long)i);
+    atom_setsym(a, gensym((char *)string));
 #else
-    SETFLOAT(argv, (float)i);
+    SETSYMBOL(a, gensym(string));
+#endif
+}
+
+void maxpd_atom_set_int(t_atom *a, int i)
+{
+#ifdef MAXMSP
+    atom_setlong(a, (long)i);
+#else
+    SETFLOAT(a, (double)i);
+#endif
+}
+
+double maxpd_atom_get_float(t_atom *a)
+{
+    return (double)atom_getfloat(a);
+}
+
+void maxpd_atom_set_float(t_atom *a, float d)
+{
+#ifdef MAXMSP
+    atom_setfloat(a, d);
+#else
+    SETFLOAT(a, d);
 #endif
 }
 

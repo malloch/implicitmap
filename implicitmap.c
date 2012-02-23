@@ -56,7 +56,6 @@ typedef struct _implicitmap
     mapper_admin admin;
     mapper_device device;
     mapper_monitor monitor;
-    lo_address address;
     mapper_db db;
     int ready;
     int new_in;
@@ -221,7 +220,7 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
 void implicitmap_free(t_implicitmap *x)
 {
     clock_unset(x->clock);    // Remove clock routine from the scheduler
-    clock_free(x->clock);     // Frees memeory used by clock
+    clock_free(x->clock);     // Frees memory used by clock
     
     if (x->device) {
         mdev_free(x->device);
@@ -231,9 +230,6 @@ void implicitmap_free(t_implicitmap *x)
     }
     if (x->monitor) {
         mapper_monitor_free(x->monitor);
-    }
-    if (x->address) {
-        lo_address_free(x->address);
     }
     if (x->admin) {
         mapper_admin_free(x->admin);
@@ -735,9 +731,6 @@ int implicitmap_setup_mapper(t_implicitmap *x)
     x->monitor = mapper_monitor_new(x->admin, 0);
     if (!x->monitor)
         return 1;
-    
-    x->address = lo_address_new_from_url("osc.udp://224.0.1.3:7570");
-    lo_address_set_ttl(x->address, 1);
     
     x->db = mapper_monitor_get_db(x->monitor);
     mapper_db_add_connection_callback(x->db, implicitmap_connect_handler, x);

@@ -11,10 +11,6 @@
 // General License version 2.1 or later.  Please see COPYING for details.
 // 
 
-#ifndef PD
-#define MAXMSP
-#endif
-
 // *********************************************************
 // -(Includes)----------------------------------------------
 
@@ -69,7 +65,7 @@ typedef struct _implicitmap
     t_atom buffer_out[MAX_LIST];
     int size_out;
     int query_count;
-    t_atom buffer[MAX_LIST];
+    t_atom msg_buffer;
     t_signal_ref signals_in[MAX_LIST];
     t_signal_ref signals_out[MAX_LIST];
 } t_implicitmap;
@@ -250,31 +246,31 @@ void implicitmap_print_properties(t_implicitmap *x)
 {    
     if (x->ready) {        
         //output name
-        set_sym(x->buffer, (char *)mdev_name(x->device));
-        outlet_anything(x->outlet3, gensym("name"), 1, x->buffer);
+        set_sym(&x->msg_buffer, (char *)mdev_name(x->device));
+        outlet_anything(x->outlet3, gensym("name"), 1, &x->msg_buffer);
         
         //output interface
-        set_sym(x->buffer, (char *)mdev_interface(x->device));
-        outlet_anything(x->outlet3, gensym("interface"), 1, x->buffer);
+        set_sym(&x->msg_buffer, (char *)mdev_interface(x->device));
+        outlet_anything(x->outlet3, gensym("interface"), 1, &x->msg_buffer);
         
         //output IP
         const struct in_addr *ip = mdev_ip4(x->device);
         if (ip) {
-            set_sym(x->buffer, inet_ntoa(*ip));
-            outlet_anything(x->outlet2, gensym("IP"), 1, x->buffer);
+            set_sym(&x->msg_buffer, inet_ntoa(*ip));
+            outlet_anything(x->outlet2, gensym("IP"), 1, &x->msg_buffer);
         }
         
         //output port
-        set_int(x->buffer, mdev_port(x->device));
-        outlet_anything(x->outlet3, gensym("port"), 1, x->buffer);
+        set_int(&x->msg_buffer, mdev_port(x->device));
+        outlet_anything(x->outlet3, gensym("port"), 1, &x->msg_buffer);
         
         //output numInputs
-        set_int(x->buffer, mdev_num_inputs(x->device));
-        outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
+        set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+        outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
         
         //output numOutputs
-        set_int(x->buffer, mdev_num_outputs(x->device));
-        outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
+        set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+        outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
     }
 }
 
@@ -597,8 +593,8 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
 
                 //output numOutputs
-                set_int(x->buffer, mdev_num_outputs(x->device));
-                outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
+                set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             else if (!osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name)) {
                 if (strcmp(signal_name, con->src_name) == 0)
@@ -629,8 +625,8 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
                 
                 //output numInputs
-                set_int(x->buffer, mdev_num_inputs(x->device));
-                outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
+                set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             break;
         }
@@ -654,8 +650,8 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
                 
                 //output numInputs
-                set_int(x->buffer, mdev_num_inputs(x->device));
-                outlet_anything(x->outlet3, gensym("numInputs"), 1, x->buffer);
+                set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
@@ -672,8 +668,8 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
                 
                 //output numOutputs
-                set_int(x->buffer, mdev_num_outputs(x->device));
-                outlet_anything(x->outlet3, gensym("numOutputs"), 1, x->buffer);
+                set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             break;
         }

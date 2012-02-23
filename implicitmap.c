@@ -365,13 +365,14 @@ void implicitmap_snapshot_timeout(t_implicitmap *x)
 // -(randomize)---------------------------------------------
 void implicitmap_randomize(t_implicitmap *x)
 {
-    int i, j, k = 0;
+    int i, j;
     float rand_val;
     mapper_db_signal props;
     if (x->ready) {
         mapper_signal *psig = mdev_get_outputs(x->device);
         for (i = 1; i < mdev_num_outputs(x->device); i ++) {
             props = msig_properties(psig[i]);
+            t_signal_ref *ref = props->user_data;
             if (props->type == 'f') {
                 float v[props->length];
                 for (j = 0; j < props->length; j++) {
@@ -379,10 +380,14 @@ void implicitmap_randomize(t_implicitmap *x)
                     if (props->minimum && props->maximum) {
                         v[j] = rand_val * (props->maximum->f - props->minimum->f) - props->minimum->f;
                     }
+                    else {
+                        // if ranges have not been declared, assume normalized between 0 and 1
+                        v[j] = rand_val;
+                    }
 #ifdef MAXMSP
-                    atom_setfloat(x->buffer_out+(k++), v[j]);
+                    atom_setfloat(x->buffer_out+ref->offset+j, v[j]);
 #else
-                    SETFLOAT(x->buffer_out+(k++), v[j]);
+                    SETFLOAT(x->buffer_out+ref->offset+j, v[j]);
 #endif
                 }
                 msig_update(psig[i], v);
@@ -394,16 +399,20 @@ void implicitmap_randomize(t_implicitmap *x)
                     if (props->minimum && props->maximum) {
                         v[j] = (int) (rand_val * (props->maximum->i32 - props->minimum->i32) - props->minimum->i32);
                     }
+                    else {
+                        // if ranges have not been declared, assume normalized between 0 and 1
+                        v[j] = (int) rand_val;
+                    }
 #ifdef MAXMSP
-                    atom_setfloat(x->buffer_in+(k++), v[j]);
+                    atom_setfloat(x->buffer_in+ref->offset+j, v[j]);
 #else
-                    SETFLOAT(x->buffer_in+(k++), v[j]);
+                    SETFLOAT(x->buffer_in+ref->offset+j, v[j]);
 #endif
                 }
                 msig_update(psig[i], v);
             }
         }
-        outlet_anything(x->outlet2, gensym("out"), k, x->buffer_out);
+        outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
     }
 }
 
@@ -411,28 +420,29 @@ void implicitmap_randomize(t_implicitmap *x)
 // -(anything)----------------------------------------------
 void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
 {
-    if (argc < x->size_out) {
+    if (argc != x->size_out) {
         post("vector size mismatch");
         return;
     }
     
-    int i=0, j=0, k=0;
+    int i=0, j=0;
     
     mapper_signal *psig = mdev_get_outputs(x->device);
     
     for (i=1; i < mdev_num_outputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
+        t_signal_ref *ref = props->user_data;
         if (props->type == 'f') {
             float v[props->length];
             for (j = 0; j < props->length; j++) {
-                v[j] = atom_getfloat(argv + k++);
+                v[j] = atom_getfloat(argv+ref->offset+j);
             }
             msig_update(psig[i], v);
         }
         else if (props->type == 'i') {
             int v[props->length];
             for (j = 0; j < props->length; j++) {
-                v[j] = (int)atom_getfloat(argv + k++);
+                v[j] = (int)atom_getfloat(argv+ref->offset+j);
             }
             msig_update(psig[i], v);
         }
@@ -450,6 +460,10 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper
     
     int j;
     for (j=0; j < props->length; j++) {
+        if (ref->offset+j >= MAX_LIST) {
+            post("mapper: Maximum vector length exceeded!");
+            break;
+        }
         if (!value) {
 #ifdef MAXMSP
             atom_setfloat(x->buffer_in+ref->offset+j, 0);
@@ -468,21 +482,13 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper
         else if (props->type == 'i') {
             int *i = value;
 #ifdef MAXMSP
-            atom_setfloat(x->buffer_in + ref->offset + j, (float)i[j]);
+            atom_setfloat(x->buffer_in+ref->offset+j, (float)i[j]);
 #else
-            SETFLOAT(x->buffer_in + ref->offset + j, (float)i[j]);
+            SETFLOAT(x->buffer_in+ref->offset+j, (float)i[j]);
 #endif
         }
     }
     x->new_in = 1;
-}
-
-// *********************************************************
-// -(output the input vector)-------------------------------
-void implicitmap_update_vector(t_implicitmap *x)
-{
-    outlet_anything(x->outlet1, gensym("in"), x->size_in, x->buffer_in);
-    x->new_in = 0;
 }
     
 // *********************************************************
@@ -494,14 +500,18 @@ void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote
     mapper_db_signal local_props = msig_properties(local_sig);
     t_signal_ref *ref = local_props->user_data;
     t_implicitmap *x = ref->x;
-    
+
     if (!local_props) {
         post("error in query_handler: user_data is NULL");
         return;
     }
     int j;
-        
+
     for (j = 0; j < remote_props->length; j++) {
+        if (ref->offset+j >= MAX_LIST) {
+            post("mapper: Maximum vector length exceeded!");
+            break;
+        }
         if (!value) {
 #ifdef MAXMSP
             atom_setfloat(x->buffer_out+ref->offset+j, 0);
@@ -526,7 +536,7 @@ void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote
 #endif
         }
     }
-    
+
     x->query_count --;
 
     if (x->query_count == 0) {
@@ -673,41 +683,69 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
 }
 
 // *********************************************************
+// -(compare signal names for qsort)------------------------
+int compare_signal_names(const void *l, const void *r)
+{
+    mapper_db_signal l_props = msig_properties(*(mapper_signal*)l);
+    mapper_db_signal r_props = msig_properties(*(mapper_signal*)r);
+    return strcmp(l_props->name, r_props->name);
+}
+
+// *********************************************************
 // -(set up new device and monitor)-------------------------
 void implicitmap_update_input_vector_positions(t_implicitmap *x)
 {
-    int i, j=1, k=0;
-    
+    int i, j=0, k=0;
+
+    // store input signal pointers
+    mapper_signal signals[mdev_num_inputs(x->device) - 1];
     mapper_signal *psig = mdev_get_inputs(x->device);
-    
+    // start counting at index 1 to ignore signal "/CONNECT_HERE"
     for (i = 1; i < mdev_num_inputs(x->device) + mdev_num_hidden_inputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
         if (!props->hidden) {
-            x->signals_in[j].offset = k;
-            props->user_data = &x->signals_in[j];
-            j++;
-            k += props->length;
+            signals[j++] = psig[i];
         }
     }
-    x->size_in = k;
+
+    // sort input signal pointer array
+    qsort(signals, mdev_num_inputs(x->device) - 1, sizeof(mapper_signal), compare_signal_names);
+
+    // set offsets and user_data
+    for (i = 0; i < mdev_num_inputs(x->device) - 1; i++) {
+        mapper_db_signal props = msig_properties(signals[i]);
+        x->signals_in[i].offset = k;
+        props->user_data = &x->signals_in[i];
+        k += props->length;
+    }
+    x->size_in = k < MAX_LIST ? k : MAX_LIST;
 }
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
 void implicitmap_update_output_vector_positions(t_implicitmap *x)
 {
-    int i, j=1, k=0;
-    
+    int i, k=0;
+
+    // store output signal pointers
+    mapper_signal signals[mdev_num_outputs(x->device) - 1];
     mapper_signal *psig = mdev_get_outputs(x->device);
-    
+    // start counting at index 1 to ignore signal "/CONNECT_HERE"
     for (i = 1; i < mdev_num_outputs(x->device); i++) {
-        mapper_db_signal props = msig_properties(psig[i]);
-        x->signals_out[j].offset = k;
-        props->user_data = &x->signals_out[j];
-        j++;
+        signals[i-1] = psig[i];
+    }
+
+    // sort output signal pointer array
+    qsort(signals, mdev_num_outputs(x->device) - 1, sizeof(mapper_signal), compare_signal_names);
+
+    // set offsets and user_data
+    for (i = 0; i < mdev_num_outputs(x->device) - 1; i++) {
+        mapper_db_signal props = msig_properties(signals[i]);
+        x->signals_out[i].offset = k;
+        props->user_data = &x->signals_out[i];
         k += props->length;
     }
-    x->size_out = k;
+    x->size_out = k < MAX_LIST ? k : MAX_LIST;
 }
 
 // *********************************************************
@@ -760,7 +798,8 @@ void implicitmap_poll(t_implicitmap *x)
         }
     }
     if (x->new_in) {
-        implicitmap_update_vector(x);
+        outlet_anything(x->outlet1, gensym("in"), x->size_in, x->buffer_in);
+        x->new_in = 0;
     }
     clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
 }

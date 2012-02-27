@@ -60,8 +60,6 @@
 			isa = PBXGroup;
 			children = (
 				709BF0321314A74A00F3881F /* implicitmap.c */,
-				70DBCB651223198A003B0196 /* include */,
-				70DBCB4D12231900003B0196 /* src */,
 			);
 			name = Source;
 			sourceTree = "<group>";
@@ -72,20 +70,6 @@
 				8D576316048677EA00EA77CD /* implicitmap.mxo */,
 			);
 			name = Products;
-			sourceTree = "<group>";
-		};
-		70DBCB4D12231900003B0196 /* src */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = src;
-			sourceTree = "<group>";
-		};
-		70DBCB651223198A003B0196 /* include */ = {
-			isa = PBXGroup;
-			children = (
-			);
-			name = include;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */

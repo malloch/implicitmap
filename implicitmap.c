@@ -93,6 +93,7 @@ static void implicitmap_poll(t_implicitmap *x);
 static void implicitmap_randomize(t_implicitmap *x);
 static void implicitmap_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 static void implicitmap_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
+static void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
 static void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
 static void implicitmap_print_properties(t_implicitmap *x);
 static int implicitmap_setup_mapper(t_implicitmap *x, const char *iface);
@@ -578,6 +579,28 @@ void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote
 
 // *********************************************************
 // -(link handler)------------------------------------------
+void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user_data)
+{
+    // do not allow self-links
+    t_implicitmap *x = user_data;
+    if (!x) {
+        post("error in connect handler: user_data is NULL");
+        return;
+    }
+    if (!x->ready) {
+        post("error in connect handler: device not ready");
+        return;
+    }
+    if (a == MDB_NEW) {
+        if (strcmp(lnk->src_name, mdev_name(x->device)) == 0 &&
+            strcmp(lnk->dest_name, mdev_name(x->device)) == 0) {
+            mapper_monitor_unlink(x->monitor, lnk->src_name, lnk->dest_name);
+        }
+    }
+}
+
+// *********************************************************
+// -(connection handler)------------------------------------
 void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user)
 {
     // if connected involves current generic signal, create a new generic signal
@@ -822,6 +845,7 @@ int implicitmap_setup_mapper(t_implicitmap *x, const char *iface)
         return 1;
 
     x->db = mapper_monitor_get_db(x->monitor);
+    mapper_db_add_link_callback(x->db, implicitmap_link_handler, x);
     mapper_db_add_connection_callback(x->db, implicitmap_connect_handler, x);
 
     implicitmap_print_properties(x);

@@ -614,6 +614,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
+                char str[256];
                 if (strcmp(signal_name, "/CONNECT_HERE") == 0)
                     return;
                 if (strcmp(signal_name, con->dest_name) != 0)
@@ -622,9 +623,19 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 if (!(msig = mdev_get_output_by_name(x->device, signal_name, 0))) {
                     post("error: output signal %s not found", signal_name);
                     return;
-                }
+                }                
                 // remove it
                 mdev_remove_output(x->device, msig);
+
+                // find corresponding hidden input signal
+                snprintf(str, 256, "%s%s", "/~", signal_name);
+                if (!(msig = mdev_get_input_by_name(x->device, str, 0))) {
+                    post("error: hidden input signal %s not found", str);
+                    return;
+                }                
+                // remove it
+                mdev_remove_input(x->device, msig);
+
                 implicitmap_update_output_vector_positions(x);
 
                 //output numOutputs

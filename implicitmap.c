@@ -45,6 +45,14 @@ typedef struct _signal_ref
     int offset;
 } t_signal_ref;
 
+typedef struct _snapshot
+{
+    int id;
+    float *inputs;
+    float *outputs;
+    struct _snapshot *next;
+} *t_snapshot;
+
 typedef struct _implicitmap
 {
     t_object ob;
@@ -59,7 +67,10 @@ typedef struct _implicitmap
     mapper_monitor monitor;
     mapper_db db;
     int ready;
+    int mute;
     int new_in;
+    int num_snapshots;
+    t_snapshot snapshots;
     t_atom buffer_in[MAX_LIST];
     int size_in;
     t_atom buffer_out[MAX_LIST];
@@ -79,14 +90,19 @@ static void *implicitmap_new(t_symbol *s, int argc, t_atom *argv);
 static void implicitmap_free(t_implicitmap *x);
 static void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv);
 static void implicitmap_poll(t_implicitmap *x);
-static void implicitmap_snapshot_timeout(t_implicitmap *x);
 static void implicitmap_randomize(t_implicitmap *x);
 static void implicitmap_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 static void implicitmap_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
 static void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
 static void implicitmap_print_properties(t_implicitmap *x);
 static int implicitmap_setup_mapper(t_implicitmap *x, const char *iface);
-static void implicitmap_snapshot(t_implicitmap *x);   
+static void implicitmap_snapshot(t_implicitmap *x);
+static void implicitmap_output_snapshot(t_implicitmap *x);
+static void implicitmap_clear_snapshots(t_implicitmap *x);
+static void implicitmap_mute_output(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv);
+static void implicitmap_process(t_implicitmap *x);
+static void implicitmap_save(t_implicitmap *x);
+static void implicitmap_load(t_implicitmap *x);
 #ifdef MAXMSP
     void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s);
 #endif
@@ -97,6 +113,7 @@ static void maxpd_atom_set_string(t_atom *a, const char *string);
 static void maxpd_atom_set_int(t_atom *a, int i);
 static double maxpd_atom_get_float(t_atom *a);
 static void maxpd_atom_set_float(t_atom *a, float d);
+void maxpd_atom_set_float_array(t_atom *a, float *d, int length);
 static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
@@ -111,11 +128,16 @@ int main(void)
         t_class *c;
         c = class_new("implicitmap", (method)implicitmap_new, (method)implicitmap_free,
                       (long)sizeof(t_implicitmap), 0L, A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_assist,           "assist",   A_CANT,     0);
-        class_addmethod(c, (method)implicitmap_snapshot,         "snapshot", A_GIMME,    0);
-        class_addmethod(c, (method)implicitmap_randomize,        "randomize",A_GIMME,    0);
-        class_addmethod(c, (method)implicitmap_list,             "list",     A_GIMME,    0);
-        class_addmethod(c, (method)implicitmap_print_properties, "print",    A_GIMME,    0);
+        class_addmethod(c, (method)implicitmap_assist,           "assist",    A_CANT,  0);
+        class_addmethod(c, (method)implicitmap_snapshot,         "snapshot",  A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_randomize,        "randomize", A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_list,             "list",      A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_print_properties, "print",     A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_clear_snapshots,  "clear",     A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_mute_output,      "mute",      A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_process,          "process",   A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_save,             "export",      A_GIMME, 0);
+        class_addmethod(c, (method)implicitmap_load,             "import",      A_GIMME, 0);
         class_register(CLASS_BOX, c); /* CLASS_NOBOX */
         mapper_class = c;
         ps_list = gensym("list");
@@ -127,10 +149,15 @@ int main(void)
         t_class *c;
         c = class_new(gensym("implicitmap"), (t_newmethod)implicitmap_new, (t_method)implicitmap_free,
                       (long)sizeof(t_implicitmap), 0L, A_GIMME, 0);
-        class_addmethod(c,   (t_method)implicitmap_snapshot,         gensym("snapshot"),  A_GIMME, 0);
-        class_addmethod(c,   (t_method)implicitmap_randomize,        gensym("randomize"), A_GIMME, 0);
-        class_addmethod(c,   (t_method)implicitmap_list,             gensym("list"),      A_GIMME, 0);
-        class_addmethod(c,   (t_method)implicitmap_print_properties, gensym("print"),     A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_snapshot,         gensym("snapshot"),  A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_randomize,        gensym("randomize"), A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_list,             gensym("list"),      A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_print_properties, gensym("print"),     A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_clear_snapshots,  gensym("clear"),     A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_mute_output,      gensym("mute"),      A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_process,          gensym("process"),   A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_save,             gensym("export"),      A_GIMME, 0);
+        class_addmethod(c, (t_method)implicitmap_load,             gensym("import"),      A_GIMME, 0);
         mapper_class = c;
         ps_list = gensym("list");
         return 0;
@@ -185,8 +212,11 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
         }
         else {
             x->ready = 0;
+            x->mute = 0;
             x->new_in = 0;
             x->query_count = 0;
+            x->num_snapshots = 0;
+            x->snapshots = 0;
             // initialize input and output buffers
             for (i = 0; i < MAX_LIST; i++) {
                 maxpd_atom_set_float(x->buffer_in+i, 0);
@@ -198,10 +228,10 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
             x->size_out = 0;
 #ifdef MAXMSP
             x->clock = clock_new(x, (method)implicitmap_poll);    // Create the timing clock
-            x->timeout = clock_new(x, (method)implicitmap_snapshot_timeout);
+            x->timeout = clock_new(x, (method)implicitmap_output_snapshot);
 #else
             x->clock = clock_new(x, (t_method)implicitmap_poll);
-            x->timeout = clock_new(x, (t_method)implicitmap_snapshot_timeout);
+            x->timeout = clock_new(x, (t_method)implicitmap_output_snapshot);
 #endif
             clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
         }
@@ -232,6 +262,7 @@ void implicitmap_free(t_implicitmap *x)
     if (x->name) {
         free(x->name);
     }
+    implicitmap_clear_snapshots(x);
 }
 
 // *********************************************************
@@ -251,7 +282,7 @@ void implicitmap_print_properties(t_implicitmap *x)
         const struct in_addr *ip = mdev_ip4(x->device);
         if (ip) {
             maxpd_atom_set_string(&x->msg_buffer, inet_ntoa(*ip));
-            outlet_anything(x->outlet2, gensym("IP"), 1, &x->msg_buffer);
+            outlet_anything(x->outlet3, gensym("IP"), 1, &x->msg_buffer);
         }
 
         //output port
@@ -259,11 +290,11 @@ void implicitmap_print_properties(t_implicitmap *x)
         outlet_anything(x->outlet3, gensym("port"), 1, &x->msg_buffer);
 
         //output numInputs
-        maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
         outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
 
         //output numOutputs
-        maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
         outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
     }
 }
@@ -281,7 +312,7 @@ void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s)
             sprintf(s, "Mapped OSC inputs");
         }
         else if (a == 1) {
-            sprintf(s, "Snapshot data for outputs");
+            sprintf(s, "Snapshot data");
         }
         else {
             sprintf(s, "Device information");
@@ -300,9 +331,19 @@ void implicitmap_snapshot(t_implicitmap *x)
         return;
     }
 
-    int i, j;
+    int i;
     mapper_signal *psig;
     x->query_count = 0;
+
+    // allocate a new snapshot
+    if (x->ready) {
+        t_snapshot new_snapshot = (t_snapshot)malloc(sizeof(t_snapshot));
+        new_snapshot->id = x->num_snapshots++;
+        new_snapshot->next = x->snapshots;
+        new_snapshot->inputs = calloc(x->size_in, sizeof(float));
+        new_snapshot->outputs = calloc(x->size_out, sizeof(float));
+        x->snapshots = new_snapshot;
+    }
 
     // iterate through input signals: hidden inputs correspond to
     // outputs/remote inputs - we need to query the remote end
@@ -316,19 +357,11 @@ void implicitmap_snapshot(t_implicitmap *x)
             x->query_count += msig_query_remote(output, psig[i]);
         }
         else {
-            mapper_signal_value_t *value = msig_value(psig[i], 0);
+            void *value = msig_value(psig[i], 0);
             t_signal_ref *ref = props->user_data;
-            for (j=0; j < props->length; j++) {
-                if (!value) {
-                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, 0);
-                }
-                else if (props->type == 'f') {
-                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, (value+j)->f);
-                }
-                else if (props->type == 'i') {
-                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, (float)(value+j)->i32);
-                }
-            }
+            int length = ref->offset + props->length < MAX_LIST ? props->length : MAX_LIST - ref->offset;
+            // we can simply use memcpy here since all our signals are type 'f'
+            memcpy(&x->snapshots->inputs[ref->offset], value, length*sizeof(float));
         }
     }
     if (x->query_count)
@@ -337,14 +370,55 @@ void implicitmap_snapshot(t_implicitmap *x)
 
 // *********************************************************
 // -(snapshot)----------------------------------------------
-void implicitmap_snapshot_timeout(t_implicitmap *x)
+void implicitmap_output_snapshot(t_implicitmap *x)
 {
     if (x->query_count) {
-        post("query timeout! setting query count to 0 and outputting current values.");
-        // output snapshot as-is
-        outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
+        post("query timeout! setting query count to 0 and outputting current values.");        
         x->query_count = 0;
     }
+    maxpd_atom_set_int(x->buffer_in, x->snapshots->id+1);
+    outlet_anything(x->outlet3, gensym("numSnapshots"), 1, x->buffer_in);
+    maxpd_atom_set_float_array(x->buffer_in, x->snapshots->inputs, x->size_in);
+    outlet_anything(x->outlet2, gensym("in"), x->size_in, x->buffer_in);
+    maxpd_atom_set_float_array(x->buffer_out, x->snapshots->outputs, x->size_out);
+    outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
+    maxpd_atom_set_int(x->buffer_in, x->snapshots->id);
+    outlet_anything(x->outlet2, gensym("snapshot"), 1, x->buffer_in);
+}
+
+// *********************************************************
+// -(mute output)-------------------------------------------
+void implicitmap_mute_output(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
+{
+    if (argc) {
+        if (argv->a_type == A_FLOAT)
+            x->mute = (int)atom_getfloat(argv);
+#ifdef MAXMSP
+        else if (argv->a_type == A_LONG)
+            x->mute = atom_getlong(argv);
+#endif
+    }
+}
+
+// *********************************************************
+// -(process)-----------------------------------------------
+void implicitmap_process(t_implicitmap *x)
+{
+    outlet_anything(x->outlet2, gensym("process"), 0, 0);
+}
+
+// *********************************************************
+// -(save)--------------------------------------------------
+void implicitmap_save(t_implicitmap *x)
+{
+    outlet_anything(x->outlet2, gensym("export"), 0, 0);
+}
+
+// *********************************************************
+// -(load)--------------------------------------------------
+void implicitmap_load(t_implicitmap *x)
+{
+    outlet_anything(x->outlet2, gensym("import"), 0, 0);
 }
 
 // *********************************************************
@@ -385,7 +459,7 @@ void implicitmap_randomize(t_implicitmap *x)
                         // if ranges have not been declared, assume normalized between 0 and 1
                         v[j] = (int) rand_val;
                     }
-                    maxpd_atom_set_float(x->buffer_in+ref->offset+j, v[j]);
+                    maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
                 }
                 msig_update(psig[i], v);
             }
@@ -398,6 +472,9 @@ void implicitmap_randomize(t_implicitmap *x)
 // -(anything)----------------------------------------------
 void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
 {
+    if (x->mute)
+        return;
+
     if (argc != x->size_out) {
         post("vector size mismatch");
         return;
@@ -425,6 +502,7 @@ void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
             msig_update(psig[i], v);
         }
     }
+    outlet_anything(x->outlet2, gensym("out"), argc, argv);
 }
 
 // *********************************************************
@@ -478,25 +556,23 @@ void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote
             post("mapper: Maximum vector length exceeded!");
             break;
         }
-        if (!value) {
-            maxpd_atom_set_float(x->buffer_out+ref->offset+j, 0);
-        }
+        if (!value)
+            continue;
         else if (remote_props->type == 'f') {
             float *f = value;
-            maxpd_atom_set_float(x->buffer_out+ref->offset+j, f[j]);
+            x->snapshots->outputs[ref->offset+j] = f[j];
         }
         else if (remote_props->type == 'i') {
             int *i = value;
-            maxpd_atom_set_float(x->buffer_out+ref->offset+j, (float)i[j]);
+            x->snapshots->outputs[ref->offset+j] = (float)i[j];
         }
     }
 
     x->query_count --;
 
     if (x->query_count == 0) {
-        outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
-        outlet_anything(x->outlet3, gensym("snapshot"), 0, 0);
-        x->query_count = 0;
+        clock_unset(x->timeout);
+        implicitmap_output_snapshot(x);
     }
 }
 
@@ -553,7 +629,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
 
                 //output numOutputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             else if (!osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name)) {
@@ -585,7 +661,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
 
                 //output numInputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             break;
@@ -610,7 +686,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_input_vector_positions(x);
 
                 //output numInputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
                 outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
             }
             else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
@@ -628,7 +704,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 implicitmap_update_output_vector_positions(x);
 
                 //output numOutputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device));
+                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
                 outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
             }
             break;
@@ -649,7 +725,7 @@ int compare_signal_names(const void *l, const void *r)
 // -(set up new device and monitor)-------------------------
 void implicitmap_update_input_vector_positions(t_implicitmap *x)
 {
-    int i, j=0, k=0;
+    int i, j=0, k=0, count;
 
     // store input signal pointers
     mapper_signal signals[mdev_num_inputs(x->device) - 1];
@@ -672,14 +748,19 @@ void implicitmap_update_input_vector_positions(t_implicitmap *x)
         props->user_data = &x->signals_in[i];
         k += props->length;
     }
-    x->size_in = k < MAX_LIST ? k : MAX_LIST;
+    count = k < MAX_LIST ? k : MAX_LIST;
+    if (count != x->size_in && x->num_snapshots) {
+        post("implicitmap: input vector size has changed - resetting snapshots!");
+        implicitmap_clear_snapshots(x);
+    }
+    x->size_in = count;
 }
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
 void implicitmap_update_output_vector_positions(t_implicitmap *x)
 {
-    int i, k=0;
+    int i, k=0, count;
 
     // store output signal pointers
     mapper_signal signals[mdev_num_outputs(x->device) - 1];
@@ -699,7 +780,12 @@ void implicitmap_update_output_vector_positions(t_implicitmap *x)
         props->user_data = &x->signals_out[i];
         k += props->length;
     }
-    x->size_out = k < MAX_LIST ? k : MAX_LIST;
+    count = k < MAX_LIST ? k : MAX_LIST;
+    if (count != x->size_out && x->num_snapshots) {
+        post("implicitmap: output vector size has changed - resetting snapshots!");
+        implicitmap_clear_snapshots(x);
+    }
+    x->size_out = count;
 }
 
 // *********************************************************
@@ -752,10 +838,26 @@ void implicitmap_poll(t_implicitmap *x)
         }
     }
     if (x->new_in) {
-        outlet_anything(x->outlet1, gensym("in"), x->size_in, x->buffer_in);
+        outlet_anything(x->outlet1, gensym("list"), x->size_in, x->buffer_in);
         x->new_in = 0;
     }
     clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
+}
+
+// *********************************************************
+// -(poll libmapper)----------------------------------------
+void implicitmap_clear_snapshots(t_implicitmap *x)
+{
+    while (x->snapshots) {
+        t_snapshot temp = x->snapshots->next;
+        free(x->snapshots->inputs);
+        free(x->snapshots->outputs);
+        x->snapshots = temp;
+    }
+    x->num_snapshots = 0;
+    outlet_anything(x->outlet2, gensym("clear"), 0, 0);
+    maxpd_atom_set_int(x->buffer_in, 0);
+    outlet_anything(x->outlet3, gensym("numSnapshots"), 1, x->buffer_in);
 }
 
 // *********************************************************
@@ -800,6 +902,18 @@ void maxpd_atom_set_float(t_atom *a, float d)
     atom_setfloat(a, d);
 #else
     SETFLOAT(a, d);
+#endif
+}
+
+void maxpd_atom_set_float_array(t_atom *a, float *d, int length)
+{
+#ifdef MAXMSP
+    atom_setfloat_array(length, a, length, d);
+#else
+    int i;
+    for (i=0; i<length; i++) {
+        SETFLOAT(a+i, d[i]);
+    }
 #endif
 }
 

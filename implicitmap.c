@@ -537,7 +537,6 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper
 // -(query handler)-----------------------------------------
 void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props, mapper_timetag_t *time, void *value)
 {
-    post("implicitmap_query_handler!");
     t_signal_ref *ref = props->user_data;
     t_implicitmap *x = ref->x;
 

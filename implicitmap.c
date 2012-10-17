@@ -66,6 +66,7 @@ typedef struct _implicitmap
     mapper_device device;
     mapper_monitor monitor;
     mapper_db db;
+    mapper_timetag_t tt;
     int ready;
     int mute;
     int new_in;
@@ -91,8 +92,12 @@ static void implicitmap_free(t_implicitmap *x);
 static void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv);
 static void implicitmap_poll(t_implicitmap *x);
 static void implicitmap_randomize(t_implicitmap *x);
-static void implicitmap_input_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
-static void implicitmap_query_handler(mapper_signal msig, mapper_db_signal props, mapper_timetag_t *time, void *value);
+static void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props,
+                                      int instance_id, void *value, int count,
+                                      mapper_timetag_t *tt);
+static void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props,
+                                      int instance_id, void *value, int count,
+                                      mapper_timetag_t *tt);
 static void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
 static void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
 static void implicitmap_print_properties(t_implicitmap *x);
@@ -175,7 +180,7 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
     const char *iface = NULL;
 
 #ifdef MAXMSP
-    if (x = object_alloc(mapper_class)) {
+    if ((x = object_alloc(mapper_class))) {
         x->outlet3 = listout((t_object *)x);
         x->outlet2 = listout((t_object *)x);
         x->outlet1 = listout((t_object *)x);
@@ -346,25 +351,24 @@ void implicitmap_snapshot(t_implicitmap *x)
         x->snapshots = new_snapshot;
     }
 
-    // iterate through input signals: hidden inputs correspond to
-    // outputs/remote inputs - we need to query the remote end
     psig = mdev_get_inputs(x->device);
-    for (i = 1; i < (mdev_num_inputs(x->device) + mdev_num_hidden_inputs(x->device)); i++) {
+    for (i = 1; i < mdev_num_inputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
-        if (props->hidden) {
-            // find associated output
-            mapper_signal output  = (mapper_signal) props->user_data;
-            // query the remote value
-            x->query_count += msig_query_remote(output, psig[i]);
-        }
-        else {
-            void *value = msig_value(psig[i], 0);
-            t_signal_ref *ref = props->user_data;
-            int length = ref->offset + props->length < MAX_LIST ? props->length : MAX_LIST - ref->offset;
-            // we can simply use memcpy here since all our signals are type 'f'
-            memcpy(&x->snapshots->inputs[ref->offset], value, length*sizeof(float));
-        }
+        void *value = msig_value(psig[i], 0);
+        t_signal_ref *ref = props->user_data;
+        int length = ref->offset + props->length < MAX_LIST ? props->length : MAX_LIST - ref->offset;
+        // we can simply use memcpy here since all our signals are type 'f'
+        memcpy(&x->snapshots->inputs[ref->offset], value, length*sizeof(float));
     }
+    psig = mdev_get_outputs(x->device);
+    mdev_timetag_now(x->device, &x->tt);
+    mdev_start_queue(x->device, x->tt);
+    for (i = 1; i < mdev_num_outputs(x->device); i++) {
+        // query the remote value
+        x->query_count += msig_query_remotes(psig[i], MAPPER_TIMETAG_NOW);
+    }
+    mdev_send_queue(x->device, x->tt);
+
     if (x->query_count)
         clock_delay(x->timeout, 1000);  // Set clock to go off after delay
 }
@@ -430,6 +434,8 @@ void implicitmap_randomize(t_implicitmap *x)
     float rand_val;
     mapper_db_signal props;
     if (x->ready) {
+        mdev_timetag_now(x->device, &x->tt);
+        mdev_start_queue(x->device, x->tt);
         mapper_signal *psig = mdev_get_outputs(x->device);
         for (i = 1; i < mdev_num_outputs(x->device); i ++) {
             props = msig_properties(psig[i]);
@@ -447,7 +453,7 @@ void implicitmap_randomize(t_implicitmap *x)
                     }
                     maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
                 }
-                msig_update(psig[i], v);
+                msig_update(psig[i], v, 1, x->tt);
             }
             else if (props->type == 'i') {
                 int v[props->length];
@@ -462,9 +468,10 @@ void implicitmap_randomize(t_implicitmap *x)
                     }
                     maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
                 }
-                msig_update(psig[i], v);
+                msig_update(psig[i], v, 1, x->tt);
             }
         }
+        mdev_send_queue(x->device, x->tt);
         outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
     }
 }
@@ -485,6 +492,8 @@ void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
 
     mapper_signal *psig = mdev_get_outputs(x->device);
 
+    mdev_timetag_now(x->device, &x->tt);
+    mdev_start_queue(x->device, x->tt);
     for (i=1; i < mdev_num_outputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
         t_signal_ref *ref = props->user_data;
@@ -493,22 +502,25 @@ void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
             for (j = 0; j < props->length; j++) {
                 v[j] = atom_getfloat(argv+ref->offset+j);
             }
-            msig_update(psig[i], v);
+            msig_update(psig[i], v, 1, x->tt);
         }
         else if (props->type == 'i') {
             int v[props->length];
             for (j = 0; j < props->length; j++) {
                 v[j] = (int)atom_getfloat(argv+ref->offset+j);
             }
-            msig_update(psig[i], v);
+            msig_update(psig[i], v, 1, x->tt);
         }
     }
+    mdev_send_queue(x->device, x->tt);
     outlet_anything(x->outlet2, gensym("out"), argc, argv);
 }
 
 // *********************************************************
 // -(input handler)-----------------------------------------
-void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper_timetag_t *time, void *value)
+void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props,
+                               int instance_id, void *value, int count,
+                               mapper_timetag_t *time)
 {
     t_signal_ref *ref = props->user_data;
     t_implicitmap *x = ref->x;
@@ -538,32 +550,28 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props, mapper
 
 // *********************************************************
 // -(query handler)-----------------------------------------
-void implicitmap_query_handler(mapper_signal remote_sig, mapper_db_signal remote_props, mapper_timetag_t *time, void *value)
+void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props,
+                               int instance_id, void *value, int count,
+                               mapper_timetag_t *time)
 {
-    mapper_signal local_sig = (mapper_signal) remote_props->user_data;
-
-    mapper_db_signal local_props = msig_properties(local_sig);
-    t_signal_ref *ref = local_props->user_data;
+    t_signal_ref *ref = props->user_data;
     t_implicitmap *x = ref->x;
+    if (!x)
+        post("pointer problem! %i", x);
 
-    if (!local_props) {
-        post("error in query_handler: user_data is NULL");
-        return;
-    }
     int j;
-
-    for (j = 0; j < remote_props->length; j++) {
+    for (j = 0; j < props->length; j++) {
         if (ref->offset+j >= MAX_LIST) {
             post("mapper: Maximum vector length exceeded!");
             break;
         }
         if (!value)
             continue;
-        else if (remote_props->type == 'f') {
+        else if (props->type == 'f') {
             float *f = value;
             x->snapshots->outputs[ref->offset+j] = f[j];
         }
-        else if (remote_props->type == 'i') {
+        else if (props->type == 'i') {
             int *i = value;
             x->snapshots->outputs[ref->offset+j] = (float)i[j];
         }
@@ -638,16 +646,12 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                     post("msig doesn't exist!");
                     return;
                 }
+                msig_set_query_callback(msig, implicitmap_query_handler, 0);
                 // connect the new signal
                 msig_full_name(msig, str, 256);
                 mapper_db_connection_t props;
                 props.mode = MO_BYPASS;
                 mapper_monitor_connect(x->monitor, str, con->dest_name, &props, CONNECTION_MODE);
-                // add a corresponding hidden input signal for querying
-                snprintf(str, 256, "%s%s", "/~", con->dest_name);
-                mdev_add_hidden_input(x->device, str, con->dest_length,
-                                      con->dest_type, 0, 0, 0,
-                                      implicitmap_query_handler, msig);
 
                 implicitmap_update_output_vector_positions(x);
 
@@ -672,7 +676,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 msig = mdev_add_input(x->device, con->src_name, length, 'f', 0,
                                       (con->range.known | CONNECTION_RANGE_SRC_MIN) ? &con->range.src_min : 0,
                                       (con->range.known | CONNECTION_RANGE_SRC_MAX) ? &con->range.src_max : 0,
-                                      implicitmap_input_handler, x);
+                                      implicitmap_input_handler, 0);
                 if (!msig)
                     return;
                 // connect the new signal
@@ -765,11 +769,8 @@ void implicitmap_update_input_vector_positions(t_implicitmap *x)
     mapper_signal signals[mdev_num_inputs(x->device) - 1];
     mapper_signal *psig = mdev_get_inputs(x->device);
     // start counting at index 1 to ignore signal "/CONNECT_HERE"
-    for (i = 1; i < mdev_num_inputs(x->device) + mdev_num_hidden_inputs(x->device); i++) {
-        mapper_db_signal props = msig_properties(psig[i]);
-        if (!props->hidden) {
-            signals[j++] = psig[i];
-        }
+    for (i = 1; i < mdev_num_inputs(x->device); i++) {
+        signals[j++] = psig[i];
     }
 
     // sort input signal pointer array

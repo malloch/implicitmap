@@ -53,7 +53,7 @@ typedef struct _snapshot
     struct _snapshot *next;
 } *t_snapshot;
 
-typedef struct _implicitmap
+typedef struct _impmap
 {
     t_object ob;
     void *outlet1;
@@ -80,40 +80,40 @@ typedef struct _implicitmap
     t_atom msg_buffer;
     t_signal_ref signals_in[MAX_LIST];
     t_signal_ref signals_out[MAX_LIST];
-} t_implicitmap;
+} impmap;
 
 static t_symbol *ps_list;
 static int port = 9000;
 
 // *********************************************************
 // -(function prototypes)-----------------------------------
-static void *implicitmap_new(t_symbol *s, int argc, t_atom *argv);
-static void implicitmap_free(t_implicitmap *x);
-static void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv);
-static void implicitmap_poll(t_implicitmap *x);
-static void implicitmap_randomize(t_implicitmap *x);
-static void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props,
-                                      int instance_id, void *value, int count,
-                                      mapper_timetag_t *tt);
-static void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props,
-                                      int instance_id, void *value, int count,
-                                      mapper_timetag_t *tt);
-static void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
-static void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
-static void implicitmap_print_properties(t_implicitmap *x);
-static int implicitmap_setup_mapper(t_implicitmap *x, const char *iface);
-static void implicitmap_snapshot(t_implicitmap *x);
-static void implicitmap_output_snapshot(t_implicitmap *x);
-static void implicitmap_clear_snapshots(t_implicitmap *x);
-static void implicitmap_mute_output(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv);
-static void implicitmap_process(t_implicitmap *x);
-static void implicitmap_save(t_implicitmap *x);
-static void implicitmap_load(t_implicitmap *x);
+static void *impmap_new(t_symbol *s, int argc, t_atom *argv);
+static void impmap_free(impmap *x);
+static void impmap_list(impmap *x, t_symbol *s, int argc, t_atom *argv);
+static void impmap_poll(impmap *x);
+static void impmap_randomize(impmap *x);
+static void impmap_input_handler(mapper_signal sig, mapper_db_signal props,
+                                 int instance_id, void *value, int count,
+                                 mapper_timetag_t *tt);
+static void impmap_query_handler(mapper_signal sig, mapper_db_signal props,
+                                 int instance_id, void *value, int count,
+                                 mapper_timetag_t *tt);
+static void impmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
+static void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
+static void impmap_print_properties(impmap *x);
+static int impmap_setup_mapper(impmap *x, const char *iface);
+static void impmap_snapshot(impmap *x);
+static void impmap_output_snapshot(impmap *x);
+static void impmap_clear_snapshots(impmap *x);
+static void impmap_mute_output(impmap *x, t_symbol *s, int argc, t_atom *argv);
+static void impmap_process(impmap *x);
+static void impmap_save(impmap *x);
+static void impmap_load(impmap *x);
 #ifdef MAXMSP
-    void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s);
+    void impmap_assist(impmap *x, void *b, long m, long a, char *s);
 #endif
-static void implicitmap_update_input_vector_positions(t_implicitmap *x);
-static void implicitmap_update_output_vector_positions(t_implicitmap *x);
+static void impmap_update_input_vector_positions(impmap *x);
+static void impmap_update_output_vector_positions(impmap *x);
 static const char *maxpd_atom_get_string(t_atom *a);
 static void maxpd_atom_set_string(t_atom *a, const char *string);
 static void maxpd_atom_set_int(t_atom *a, int i);
@@ -130,51 +130,51 @@ static void *mapper_class;
 // -(main)--------------------------------------------------
 #ifdef MAXMSP
 int main(void)
-    {
-        t_class *c;
-        c = class_new("implicitmap", (method)implicitmap_new, (method)implicitmap_free,
-                      (long)sizeof(t_implicitmap), 0L, A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_assist,           "assist",    A_CANT,  0);
-        class_addmethod(c, (method)implicitmap_snapshot,         "snapshot",  A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_randomize,        "randomize", A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_list,             "list",      A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_print_properties, "print",     A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_clear_snapshots,  "clear",     A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_mute_output,      "mute",      A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_process,          "process",   A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_save,             "export",      A_GIMME, 0);
-        class_addmethod(c, (method)implicitmap_load,             "import",      A_GIMME, 0);
-        class_register(CLASS_BOX, c); /* CLASS_NOBOX */
-        mapper_class = c;
-        ps_list = gensym("list");
-        return 0;
-    }
+{
+    t_class *c;
+    c = class_new("implicitmap", (method)impmap_new, (method)impmap_free,
+                  (long)sizeof(impmap), 0L, A_GIMME, 0);
+    class_addmethod(c, (method)impmap_assist,           "assist",    A_CANT,  0);
+    class_addmethod(c, (method)impmap_snapshot,         "snapshot",  A_GIMME, 0);
+    class_addmethod(c, (method)impmap_randomize,        "randomize", A_GIMME, 0);
+    class_addmethod(c, (method)impmap_list,             "list",      A_GIMME, 0);
+    class_addmethod(c, (method)impmap_print_properties, "print",     A_GIMME, 0);
+    class_addmethod(c, (method)impmap_clear_snapshots,  "clear",     A_GIMME, 0);
+    class_addmethod(c, (method)impmap_mute_output,      "mute",      A_GIMME, 0);
+    class_addmethod(c, (method)impmap_process,          "process",   A_GIMME, 0);
+    class_addmethod(c, (method)impmap_save,             "export",    A_GIMME, 0);
+    class_addmethod(c, (method)impmap_load,             "import",    A_GIMME, 0);
+    class_register(CLASS_BOX, c); /* CLASS_NOBOX */
+    mapper_class = c;
+    ps_list = gensym("list");
+    return 0;
+}
 #else
-    int implicitmap_setup(void)
-    {
-        t_class *c;
-        c = class_new(gensym("implicitmap"), (t_newmethod)implicitmap_new, (t_method)implicitmap_free,
-                      (long)sizeof(t_implicitmap), 0L, A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_snapshot,         gensym("snapshot"),  A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_randomize,        gensym("randomize"), A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_list,             gensym("list"),      A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_print_properties, gensym("print"),     A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_clear_snapshots,  gensym("clear"),     A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_mute_output,      gensym("mute"),      A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_process,          gensym("process"),   A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_save,             gensym("export"),      A_GIMME, 0);
-        class_addmethod(c, (t_method)implicitmap_load,             gensym("import"),      A_GIMME, 0);
-        mapper_class = c;
-        ps_list = gensym("list");
-        return 0;
-    }
+int implicitmap_setup(void)
+{
+    t_class *c;
+    c = class_new(gensym("implicitmap"), (t_newmethod)impmap_new, (t_method)impmap_free,
+                  (long)sizeof(impmap), 0L, A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_snapshot,         gensym("snapshot"),  A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_randomize,        gensym("randomize"), A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_list,             gensym("list"),      A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_print_properties, gensym("print"),     A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_clear_snapshots,  gensym("clear"),     A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_mute_output,      gensym("mute"),      A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_process,          gensym("process"),   A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_save,             gensym("export"),      A_GIMME, 0);
+    class_addmethod(c, (t_method)impmap_load,             gensym("import"),      A_GIMME, 0);
+    mapper_class = c;
+    ps_list = gensym("list");
+    return 0;
+}
 #endif
 
 // *********************************************************
 // -(new)---------------------------------------------------
-void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
+void *impmap_new(t_symbol *s, int argc, t_atom *argv)
 {
-    t_implicitmap *x = NULL;
+    impmap *x = NULL;
     long i;
     const char *alias = NULL;
     const char *iface = NULL;
@@ -185,7 +185,7 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
         x->outlet2 = listout((t_object *)x);
         x->outlet1 = listout((t_object *)x);
 #else
-    if (x = (t_implicitmap *) pd_new(mapper_class) ) {
+    if (x = (impmap *) pd_new(mapper_class) ) {
         x->outlet1 = outlet_new(&x->ob, gensym("list"));
         x->outlet2 = outlet_new(&x->ob, gensym("list"));
         x->outlet3 = outlet_new(&x->ob, gensym("list"));
@@ -213,7 +213,7 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
             x->name = *alias == '/' ? strdup(alias+1) : strdup(alias);
         }
 
-        if (implicitmap_setup_mapper(x, iface)) {
+        if (impmap_setup_mapper(x, iface)) {
             post("implicitmap: Error initializing.");
         }
         else {
@@ -233,11 +233,11 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
             x->size_in = 0;
             x->size_out = 0;
 #ifdef MAXMSP
-            x->clock = clock_new(x, (method)implicitmap_poll);    // Create the timing clock
-            x->timeout = clock_new(x, (method)implicitmap_output_snapshot);
+            x->clock = clock_new(x, (method)impmap_poll);    // Create the timing clock
+            x->timeout = clock_new(x, (method)impmap_output_snapshot);
 #else
-            x->clock = clock_new(x, (t_method)implicitmap_poll);
-            x->timeout = clock_new(x, (t_method)implicitmap_output_snapshot);
+            x->clock = clock_new(x, (t_method)impmap_poll);
+            x->timeout = clock_new(x, (t_method)impmap_output_snapshot);
 #endif
             clock_delay(x->clock, INTERVAL);  // Set clock to go off after delay
         }
@@ -247,7 +247,7 @@ void *implicitmap_new(t_symbol *s, int argc, t_atom *argv)
 
 // *********************************************************
 // -(free)--------------------------------------------------
-void implicitmap_free(t_implicitmap *x)
+void impmap_free(impmap *x)
 {
     if (x->clock) {
         clock_unset(x->clock);    // Remove clock routine from the scheduler
@@ -257,7 +257,7 @@ void implicitmap_free(t_implicitmap *x)
         mdev_free(x->device);
     }
     if (x->db) {
-        mapper_db_remove_connection_callback(x->db, implicitmap_connect_handler, x);
+        mapper_db_remove_connection_callback(x->db, impmap_connect_handler, x);
     }
     if (x->monitor) {
         mapper_monitor_free(x->monitor);
@@ -268,12 +268,12 @@ void implicitmap_free(t_implicitmap *x)
     if (x->name) {
         free(x->name);
     }
-    implicitmap_clear_snapshots(x);
+    impmap_clear_snapshots(x);
 }
 
 // *********************************************************
 // -(print properties)--------------------------------------
-void implicitmap_print_properties(t_implicitmap *x)
+void impmap_print_properties(impmap *x)
 {
     if (x->ready) {
         //output name
@@ -308,7 +308,7 @@ void implicitmap_print_properties(t_implicitmap *x)
 // *********************************************************
 // -(inlet/outlet assist - maxmsp only)---------------------
 #ifdef MAXMSP
-void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s)
+void impmap_assist(impmap *x, void *b, long m, long a, char *s)
 {
     if (m == ASSIST_INLET) { // inlet
         sprintf(s, "OSC input");
@@ -329,7 +329,7 @@ void implicitmap_assist(t_implicitmap *x, void *b, long m, long a, char *s)
 
 // *********************************************************
 // -(snapshot)----------------------------------------------
-void implicitmap_snapshot(t_implicitmap *x)
+void impmap_snapshot(impmap *x)
 {
     // if previous snapshot still in progress, output current snapshot status
     if (x->query_count) {
@@ -379,7 +379,7 @@ void implicitmap_snapshot(t_implicitmap *x)
 
 // *********************************************************
 // -(snapshot)----------------------------------------------
-void implicitmap_output_snapshot(t_implicitmap *x)
+void impmap_output_snapshot(impmap *x)
 {
     if (x->query_count) {
         post("query timeout! setting query count to 0 and outputting current values.");        
@@ -397,7 +397,7 @@ void implicitmap_output_snapshot(t_implicitmap *x)
 
 // *********************************************************
 // -(mute output)-------------------------------------------
-void implicitmap_mute_output(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
+void impmap_mute_output(impmap *x, t_symbol *s, int argc, t_atom *argv)
 {
     if (argc) {
         if (argv->a_type == A_FLOAT)
@@ -411,28 +411,28 @@ void implicitmap_mute_output(t_implicitmap *x, t_symbol *s, int argc, t_atom *ar
 
 // *********************************************************
 // -(process)-----------------------------------------------
-void implicitmap_process(t_implicitmap *x)
+void impmap_process(impmap *x)
 {
     outlet_anything(x->outlet2, gensym("process"), 0, 0);
 }
 
 // *********************************************************
 // -(save)--------------------------------------------------
-void implicitmap_save(t_implicitmap *x)
+void impmap_save(impmap *x)
 {
     outlet_anything(x->outlet2, gensym("export"), 0, 0);
 }
 
 // *********************************************************
 // -(load)--------------------------------------------------
-void implicitmap_load(t_implicitmap *x)
+void impmap_load(impmap *x)
 {
     outlet_anything(x->outlet2, gensym("import"), 0, 0);
 }
 
 // *********************************************************
 // -(randomize)---------------------------------------------
-void implicitmap_randomize(t_implicitmap *x)
+void impmap_randomize(impmap *x)
 {
     int i, j;
     float rand_val;
@@ -482,7 +482,7 @@ void implicitmap_randomize(t_implicitmap *x)
 
 // *********************************************************
 // -(anything)----------------------------------------------
-void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
+void impmap_list(impmap *x, t_symbol *s, int argc, t_atom *argv)
 {
     if (x->mute)
         return;
@@ -522,12 +522,12 @@ void implicitmap_list(t_implicitmap *x, t_symbol *s, int argc, t_atom *argv)
 
 // *********************************************************
 // -(input handler)-----------------------------------------
-void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props,
+void impmap_input_handler(mapper_signal sig, mapper_db_signal props,
                                int instance_id, void *value, int count,
                                mapper_timetag_t *time)
 {
     t_signal_ref *ref = props->user_data;
-    t_implicitmap *x = ref->x;
+    impmap *x = ref->x;
 
     int j;
     for (j=0; j < props->length; j++) {
@@ -552,12 +552,12 @@ void implicitmap_input_handler(mapper_signal sig, mapper_db_signal props,
 
 // *********************************************************
 // -(query handler)-----------------------------------------
-void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props,
+void impmap_query_handler(mapper_signal sig, mapper_db_signal props,
                                int instance_id, void *value, int count,
                                mapper_timetag_t *time)
 {
     t_signal_ref *ref = props->user_data;
-    t_implicitmap *x = ref->x;
+    impmap *x = ref->x;
     if (!x)
         post("pointer problem! %i", x);
 
@@ -583,16 +583,16 @@ void implicitmap_query_handler(mapper_signal sig, mapper_db_signal props,
 
     if (x->query_count == 0) {
         clock_unset(x->timeout);
-        implicitmap_output_snapshot(x);
+        impmap_output_snapshot(x);
     }
 }
 
 // *********************************************************
 // -(link handler)------------------------------------------
-void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user_data)
+void impmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user_data)
 {
     // do not allow self-links
-    t_implicitmap *x = user_data;
+    impmap *x = user_data;
     if (!x) {
         post("error in connect handler: user_data is NULL");
         return;
@@ -611,10 +611,10 @@ void implicitmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *us
 
 // *********************************************************
 // -(connection handler)------------------------------------
-void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user)
+void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user)
 {
     // if connected involves current generic signal, create a new generic signal
-    t_implicitmap *x = user;
+    impmap *x = user;
     if (!x) {
         post("error in connect handler: user_data is NULL");
         return;
@@ -648,14 +648,14 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                     post("msig doesn't exist!");
                     return;
                 }
-                msig_set_query_callback(msig, implicitmap_query_handler, 0);
+                msig_set_query_callback(msig, impmap_query_handler, 0);
                 // connect the new signal
                 msig_full_name(msig, str, 256);
                 mapper_db_connection_t props;
                 props.mode = MO_BYPASS;
                 mapper_monitor_connect(x->monitor, str, con->dest_name, &props, CONNECTION_MODE);
 
-                implicitmap_update_output_vector_positions(x);
+                impmap_update_output_vector_positions(x);
 
                 //output numOutputs
                 maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
@@ -678,7 +678,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 msig = mdev_add_input(x->device, con->src_name, length, 'f', 0,
                                       (con->range.known | CONNECTION_RANGE_SRC_MIN) ? &con->range.src_min : 0,
                                       (con->range.known | CONNECTION_RANGE_SRC_MAX) ? &con->range.src_max : 0,
-                                      implicitmap_input_handler, 0);
+                                      impmap_input_handler, 0);
                 if (!msig)
                     return;
                 // connect the new signal
@@ -687,7 +687,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 msig_full_name(msig, str, 256);
                 mapper_monitor_connect(x->monitor, con->src_name, str, &props, CONNECTION_MODE);
 
-                implicitmap_update_input_vector_positions(x);
+                impmap_update_input_vector_positions(x);
 
                 //output numInputs
                 maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
@@ -712,7 +712,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 }
                 // remove it
                 mdev_remove_input(x->device, msig);
-                implicitmap_update_input_vector_positions(x);
+                impmap_update_input_vector_positions(x);
 
                 //output numInputs
                 maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
@@ -730,7 +730,7 @@ void implicitmap_connect_handler(mapper_db_connection con, mapper_db_action_t a,
                 }                
                 // remove it
                 mdev_remove_output(x->device, msig);
-                implicitmap_update_output_vector_positions(x);
+                impmap_update_output_vector_positions(x);
 
                 //output numOutputs
                 maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
@@ -752,7 +752,7 @@ int compare_signal_names(const void *l, const void *r)
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
-void implicitmap_update_input_vector_positions(t_implicitmap *x)
+void impmap_update_input_vector_positions(impmap *x)
 {
     int i, k=0, count;
 
@@ -777,14 +777,14 @@ void implicitmap_update_input_vector_positions(t_implicitmap *x)
     count = k < MAX_LIST ? k : MAX_LIST;
     if (count != x->size_in && x->num_snapshots) {
         post("implicitmap: input vector size has changed - resetting snapshots!");
-        implicitmap_clear_snapshots(x);
+        impmap_clear_snapshots(x);
     }
     x->size_in = count;
 }
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
-void implicitmap_update_output_vector_positions(t_implicitmap *x)
+void impmap_update_output_vector_positions(impmap *x)
 {
     int i, k=0, count;
 
@@ -809,14 +809,14 @@ void implicitmap_update_output_vector_positions(t_implicitmap *x)
     count = k < MAX_LIST ? k : MAX_LIST;
     if (count != x->size_out && x->num_snapshots) {
         post("implicitmap: output vector size has changed - resetting snapshots!");
-        implicitmap_clear_snapshots(x);
+        impmap_clear_snapshots(x);
     }
     x->size_out = count;
 }
 
 // *********************************************************
 // -(set up new device and monitor)-------------------------
-int implicitmap_setup_mapper(t_implicitmap *x, const char *iface)
+int impmap_setup_mapper(impmap *x, const char *iface)
 {
     post("using name: %s", x->name);
     x->admin = 0;
@@ -837,17 +837,17 @@ int implicitmap_setup_mapper(t_implicitmap *x, const char *iface)
         return 1;
 
     x->db = mapper_monitor_get_db(x->monitor);
-    mapper_db_add_link_callback(x->db, implicitmap_link_handler, x);
-    mapper_db_add_connection_callback(x->db, implicitmap_connect_handler, x);
+    mapper_db_add_link_callback(x->db, impmap_link_handler, x);
+    mapper_db_add_connection_callback(x->db, impmap_connect_handler, x);
 
-    implicitmap_print_properties(x);
+    impmap_print_properties(x);
 
     return 0;
 }
 
 // *********************************************************
 // -(poll libmapper)----------------------------------------
-void implicitmap_poll(t_implicitmap *x)
+void impmap_poll(impmap *x)
 {
     mdev_poll(x->device, 0);
     mapper_monitor_poll(x->monitor, 0);
@@ -861,7 +861,7 @@ void implicitmap_poll(t_implicitmap *x)
             // create a new generic input signal
             mdev_add_input(x->device, "/CONNECT_HERE", 1, 'f', 0, 0, 0, 0, x);
 
-            implicitmap_print_properties(x);
+            impmap_print_properties(x);
         }
     }
     if (x->new_in) {
@@ -873,7 +873,7 @@ void implicitmap_poll(t_implicitmap *x)
 
 // *********************************************************
 // -(poll libmapper)----------------------------------------
-void implicitmap_clear_snapshots(t_implicitmap *x)
+void impmap_clear_snapshots(impmap *x)
 {
     while (x->snapshots) {
         t_snapshot temp = x->snapshots->next;

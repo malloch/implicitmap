@@ -186,7 +186,7 @@
 					/Developer/Headers/FlatCarbon,
 					"\"/Library/Application Support/c74support/max-includes\"",
 					./../libmapper/include/,
-					./../liblo,
+					"/usr/local/include/**",
 				);
 				INFOPLIST_FILE = Info.plist;
 				INSTALL_PATH = "";

@@ -364,11 +364,11 @@ void impmap_snapshot(impmap *x)
 
     // iterate through output signals and query the remote ends
     psig = mdev_get_outputs(x->device);
-    mdev_timetag_now(x->device, &x->tt);
+    mdev_now(x->device, &x->tt);
     mdev_start_queue(x->device, x->tt);
     for (i = 1; i < mdev_num_outputs(x->device); i++) {
         // query the remote value
-        x->query_count += msig_query_remotes(psig[i], MAPPER_TIMETAG_NOW);
+        x->query_count += msig_query_remotes(psig[i], MAPPER_NOW);
     }
     mdev_send_queue(x->device, x->tt);
     post("sent %i queries", x->query_count);
@@ -438,7 +438,7 @@ void impmap_randomize(impmap *x)
     float rand_val;
     mapper_db_signal props;
     if (x->ready) {
-        mdev_timetag_now(x->device, &x->tt);
+        mdev_now(x->device, &x->tt);
         mdev_start_queue(x->device, x->tt);
         mapper_signal *psig = mdev_get_outputs(x->device);
         for (i = 1; i < mdev_num_outputs(x->device); i ++) {
@@ -496,7 +496,7 @@ void impmap_list(impmap *x, t_symbol *s, int argc, t_atom *argv)
 
     mapper_signal *psig = mdev_get_outputs(x->device);
 
-    mdev_timetag_now(x->device, &x->tt);
+    mdev_now(x->device, &x->tt);
     mdev_start_queue(x->device, x->tt);
     for (i=1; i < mdev_num_outputs(x->device); i++) {
         mapper_db_signal props = msig_properties(psig[i]);
@@ -648,7 +648,7 @@ void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
                     post("msig doesn't exist!");
                     return;
                 }
-                msig_set_query_callback(msig, impmap_query_handler, 0);
+                msig_set_callback(msig, impmap_query_handler, 0);
                 // connect the new signal
                 msig_full_name(msig, str, 256);
                 mapper_db_connection_t props;

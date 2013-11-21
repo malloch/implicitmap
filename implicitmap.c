@@ -641,9 +641,12 @@ void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
                 mapper_signal msig;
                 char str[256];
                 int length = con->dest_length ? : 1;
+                float min = (con->range.known & CONNECTION_RANGE_DEST_MIN) ?
+                            (float)con->range.dest_min : 0.0f;
+                float max = (con->range.known & CONNECTION_RANGE_DEST_MAX) ?
+                            (float)con->range.dest_max : 1.0f;
                 msig = mdev_add_output(x->device, con->dest_name, length, 'f', 0,
-                                       (con->range.known | CONNECTION_RANGE_DEST_MIN) ? &con->range.dest_min : 0,
-                                       (con->range.known | CONNECTION_RANGE_DEST_MAX) ? &con->range.dest_max : 0);
+                                       &min, &max);
                 if (!msig) {
                     post("msig doesn't exist!");
                     return;
@@ -675,10 +678,12 @@ void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
                 mapper_signal msig;
                 char str[256];
                 int length = con->src_length ? : 1;
+                float min = (con->range.known & CONNECTION_RANGE_SRC_MIN) ?
+                            (float)con->range.src_min : 0.0f;
+                float max = (con->range.known & CONNECTION_RANGE_SRC_MAX) ?
+                            (float)con->range.src_max : 1.0f;
                 msig = mdev_add_input(x->device, con->src_name, length, 'f', 0,
-                                      (con->range.known | CONNECTION_RANGE_SRC_MIN) ? &con->range.src_min : 0,
-                                      (con->range.known | CONNECTION_RANGE_SRC_MAX) ? &con->range.src_max : 0,
-                                      impmap_input_handler, 0);
+                                      &min, &max, impmap_input_handler, 0);
                 if (!msig)
                     return;
                 // connect the new signal

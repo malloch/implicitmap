@@ -1,0 +1,6 @@
+After building external for OSX:
+
+./dylibbundler -cd -b -p '@loader_path/../libs/' -x ../implicitmap.mxo/Contents/MacOS/implicitmap -d ../implicitmap.mxo/Contents/libs/
+
+
+Notes: need 32-bit version of liblo and libmapper dylibs

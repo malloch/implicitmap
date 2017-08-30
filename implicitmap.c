@@ -1,7 +1,7 @@
 //
 // implicitmap.c
 // a maxmsp and puredata external encapsulating the functionality of libmapper
-// for performing implicit mapping 
+// for performing implicit mapping
 // http://www.idmil.org/software/libmapper
 // Joseph Malloch, IDMIL 2010
 //
@@ -9,7 +9,7 @@
 // Laboratory at McGill University in Montreal, and is copyright those
 // found in the AUTHORS file.  It is licensed under the GNU Lesser Public
 // General License version 2.1 or later.  Please see COPYING for details.
-// 
+//
 
 // *********************************************************
 // -(Includes)----------------------------------------------
@@ -24,7 +24,6 @@
     #define A_SYM A_SYMBOL
 #endif
 #include "mapper/mapper.h"
-#include "mapper/mapper_db.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -62,10 +61,9 @@ typedef struct _impmap
     void *clock;          // pointer to clock object
     void *timeout;
     char *name;
-    mapper_admin admin;
     mapper_device device;
-    mapper_monitor monitor;
-    mapper_db db;
+    mapper_signal dummy_input;
+    mapper_signal dummy_output;
     mapper_timetag_t tt;
     int ready;
     int mute;
@@ -92,14 +90,12 @@ static void impmap_free(impmap *x);
 static void impmap_list(impmap *x, t_symbol *s, int argc, t_atom *argv);
 static void impmap_poll(impmap *x);
 static void impmap_randomize(impmap *x);
-static void impmap_input_handler(mapper_signal sig, mapper_db_signal props,
-                                 int instance_id, void *value, int count,
-                                 mapper_timetag_t *tt);
-static void impmap_query_handler(mapper_signal sig, mapper_db_signal props,
-                                 int instance_id, void *value, int count,
-                                 mapper_timetag_t *tt);
-static void impmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user);
-static void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user);
+static void impmap_on_input(mapper_signal sig, mapper_id instance,
+                            const void *value, int count, mapper_timetag_t *tt);
+static void impmap_on_query(mapper_signal sig, mapper_id instance,
+                            const void *value, int count, mapper_timetag_t *tt);
+static void impmap_on_map(mapper_device dev, mapper_map map,
+                          mapper_record_event e);
 static void impmap_print_properties(impmap *x);
 static int impmap_setup_mapper(impmap *x, const char *iface);
 static void impmap_snapshot(impmap *x);
@@ -120,7 +116,6 @@ static void maxpd_atom_set_int(t_atom *a, int i);
 static double maxpd_atom_get_float(t_atom *a);
 static void maxpd_atom_set_float(t_atom *a, float d);
 void maxpd_atom_set_float_array(t_atom *a, float *d, int length);
-static int osc_prefix_cmp(const char *str1, const char *str2, const char **rest);
 
 // *********************************************************
 // -(global class pointer variable)-------------------------
@@ -254,16 +249,7 @@ void impmap_free(impmap *x)
         clock_free(x->clock);     // Frees memory used by clock
     }
     if (x->device) {
-        mdev_free(x->device);
-    }
-    if (x->db) {
-        mapper_db_remove_connection_callback(x->db, impmap_connect_handler, x);
-    }
-    if (x->monitor) {
-        mapper_monitor_free(x->monitor);
-    }
-    if (x->admin) {
-        mapper_admin_free(x->admin);
+        mapper_device_free(x->device);
     }
     if (x->name) {
         free(x->name);
@@ -277,30 +263,31 @@ void impmap_print_properties(impmap *x)
 {
     if (x->ready) {
         //output name
-        maxpd_atom_set_string(&x->msg_buffer, mdev_name(x->device));
+        maxpd_atom_set_string(&x->msg_buffer, mapper_device_name(x->device));
         outlet_anything(x->outlet3, gensym("name"), 1, &x->msg_buffer);
 
+        mapper_network net = mapper_device_network(x->device);
         //output interface
-        maxpd_atom_set_string(&x->msg_buffer, (char *)mdev_interface(x->device));
+        maxpd_atom_set_string(&x->msg_buffer, (char *)mapper_network_interface(net));
         outlet_anything(x->outlet3, gensym("interface"), 1, &x->msg_buffer);
 
         //output IP
-        const struct in_addr *ip = mdev_ip4(x->device);
+        const struct in_addr *ip = mapper_network_ip4(net);
         if (ip) {
             maxpd_atom_set_string(&x->msg_buffer, inet_ntoa(*ip));
             outlet_anything(x->outlet3, gensym("IP"), 1, &x->msg_buffer);
         }
 
         //output port
-        maxpd_atom_set_int(&x->msg_buffer, mdev_port(x->device));
+        maxpd_atom_set_int(&x->msg_buffer, mapper_device_port(x->device));
         outlet_anything(x->outlet3, gensym("port"), 1, &x->msg_buffer);
 
         //output numInputs
-        maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
+        maxpd_atom_set_int(&x->msg_buffer, mapper_device_num_signals(x->device, MAPPER_DIR_INCOMING) - 1);
         outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
 
         //output numOutputs
-        maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
+        maxpd_atom_set_int(&x->msg_buffer, mapper_device_num_signals(x->device, MAPPER_DIR_OUTGOING) - 1);
         outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
     }
 }
@@ -337,7 +324,6 @@ void impmap_snapshot(impmap *x)
         return;
     }
 
-    int i;
     mapper_signal *psig;
     x->query_count = 0;
 
@@ -352,25 +338,32 @@ void impmap_snapshot(impmap *x)
     }
 
     // iterate through input signals and store their current values
-    psig = mdev_get_inputs(x->device);
-    for (i = 1; i < mdev_num_inputs(x->device); i++) {
-        mapper_db_signal props = msig_properties(psig[i]);
-        void *value = msig_value(psig[i], 0);
-        t_signal_ref *ref = props->user_data;
-        int length = ref->offset + props->length < MAX_LIST ? props->length : MAX_LIST - ref->offset;
-        // we can simply use memcpy here since all our signals are type 'f'
-        memcpy(&x->snapshots->inputs[ref->offset], value, length*sizeof(float));
+    psig = mapper_device_signals(x->device, MAPPER_DIR_INCOMING);
+    while (psig) {
+        if (*psig != x->dummy_input) {
+            void *value = (void*)mapper_signal_value(*psig, 0);
+            t_signal_ref *ref = mapper_signal_user_data(*psig);
+            int siglength = mapper_signal_length(*psig);
+            int length = ref->offset + siglength < MAX_LIST ? siglength : MAX_LIST - ref->offset;
+            // we can simply use memcpy here since all our signals are type 'f'
+            memcpy(&x->snapshots->inputs[ref->offset], value, length * sizeof(float));
+        }
+        psig = mapper_signal_query_next(psig);
     }
 
+    mapper_timetag_now(&x->tt);
+    mapper_device_start_queue(x->device, x->tt);
+
     // iterate through output signals and query the remote ends
-    psig = mdev_get_outputs(x->device);
-    mdev_now(x->device, &x->tt);
-    mdev_start_queue(x->device, x->tt);
-    for (i = 1; i < mdev_num_outputs(x->device); i++) {
-        // query the remote value
-        x->query_count += msig_query_remotes(psig[i], MAPPER_NOW);
+    psig = mapper_device_signals(x->device, MAPPER_DIR_OUTGOING);
+    while (psig) {
+        if (*psig != x->dummy_output) {
+            // query the remote value
+            x->query_count += mapper_signal_query_remotes(*psig, MAPPER_NOW);
+        }
+        psig = mapper_signal_query_next(psig);
     }
-    mdev_send_queue(x->device, x->tt);
+    mapper_device_send_queue(x->device, x->tt);
     post("sent %i queries", x->query_count);
 
     if (x->query_count)
@@ -382,7 +375,7 @@ void impmap_snapshot(impmap *x)
 void impmap_output_snapshot(impmap *x)
 {
     if (x->query_count) {
-        post("query timeout! setting query count to 0 and outputting current values.");        
+        post("query timeout! setting query count to 0 and outputting current values.");
         x->query_count = 0;
     }
     maxpd_atom_set_int(x->buffer_in, x->snapshots->id+1);
@@ -434,48 +427,40 @@ void impmap_load(impmap *x)
 // -(randomize)---------------------------------------------
 void impmap_randomize(impmap *x)
 {
-    int i, j;
+    int i;
     float rand_val;
-    mapper_db_signal props;
+
     if (x->ready) {
-        mdev_now(x->device, &x->tt);
-        mdev_start_queue(x->device, x->tt);
-        mapper_signal *psig = mdev_get_outputs(x->device);
-        for (i = 1; i < mdev_num_outputs(x->device); i ++) {
-            props = msig_properties(psig[i]);
-            t_signal_ref *ref = props->user_data;
-            if (props->type == 'f') {
-                float v[props->length];
-                for (j = 0; j < props->length; j++) {
-                    rand_val = (float)rand() / (float)RAND_MAX;
-                    if (props->minimum && props->maximum) {
-                        v[j] = rand_val * (props->maximum->f - props->minimum->f) + props->minimum->f;
-                    }
-                    else {
-                        // if ranges have not been declared, assume normalized between 0 and 1
-                        v[j] = rand_val;
-                    }
-                    maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
-                }
-                msig_update(psig[i], v, 1, x->tt);
+        mapper_timetag_now(&x->tt);
+        mapper_device_start_queue(x->device, x->tt);
+        mapper_signal *psig = mapper_device_signals(x->device, MAPPER_DIR_OUTGOING);
+        while (psig) {
+            if (*psig == x->dummy_output) {
+                psig = mapper_signal_query_next(psig);
+                continue;
             }
-            else if (props->type == 'i') {
-                int v[props->length];
-                for (j = 0; j < props->length; j++) {
-                    rand_val = (float)rand() / (float)RAND_MAX;
-                    if (props->minimum && props->maximum) {
-                        v[j] = (int) (rand_val * (props->maximum->i32 - props->minimum->i32) + props->minimum->i32);
-                    }
-                    else {
-                        // if ranges have not been declared, assume normalized between 0 and 1
-                        v[j] = (int) rand_val;
-                    }
-                    maxpd_atom_set_float(x->buffer_out+ref->offset+j, v[j]);
+            t_signal_ref *ref = mapper_signal_user_data(*psig);
+            if (mapper_signal_type(*psig) != 'f')
+                continue;
+            int length = mapper_signal_length(*psig);
+            float v[length];
+            float *min = (float*)mapper_signal_minimum(*psig);
+            float *max = (float*)mapper_signal_maximum(*psig);
+            for (i = 0; i < length; i++) {
+                rand_val = (float)rand() / (float)RAND_MAX;
+                if (min && max) {
+                    v[i] = rand_val * (max[i] - min[i]) + min[i];
                 }
-                msig_update(psig[i], v, 1, x->tt);
+                else {
+                    // if ranges have not been declared, assume normalized between 0 and 1
+                    v[i] = rand_val;
+                }
+                maxpd_atom_set_float(x->buffer_out + ref->offset + i, v[i]);
             }
+            mapper_signal_update(*psig, v, 1, x->tt);
+            psig = mapper_signal_query_next(psig);
         }
-        mdev_send_queue(x->device, x->tt);
+        mapper_device_send_queue(x->device, x->tt);
         outlet_anything(x->outlet2, gensym("out"), x->size_out, x->buffer_out);
     }
 }
@@ -492,91 +477,76 @@ void impmap_list(impmap *x, t_symbol *s, int argc, t_atom *argv)
         return;
     }
 
-    int i=0, j=0;
+    int i = 0;
 
-    mapper_signal *psig = mdev_get_outputs(x->device);
+    mapper_timetag_now(&x->tt);
+    mapper_device_start_queue(x->device, x->tt);
 
-    mdev_now(x->device, &x->tt);
-    mdev_start_queue(x->device, x->tt);
-    for (i=1; i < mdev_num_outputs(x->device); i++) {
-        mapper_db_signal props = msig_properties(psig[i]);
-        t_signal_ref *ref = props->user_data;
-        if (props->type == 'f') {
-            float v[props->length];
-            for (j = 0; j < props->length; j++) {
-                v[j] = atom_getfloat(argv+ref->offset+j);
-            }
-            msig_update(psig[i], v, 1, x->tt);
+    mapper_signal *psig = mapper_device_signals(x->device, MAPPER_DIR_OUTGOING);
+    while (psig) {
+        if (*psig == x->dummy_output) {
+            psig = mapper_signal_query_next(psig);
+            continue;
         }
-        else if (props->type == 'i') {
-            int v[props->length];
-            for (j = 0; j < props->length; j++) {
-                v[j] = (int)atom_getfloat(argv+ref->offset+j);
-            }
-            msig_update(psig[i], v, 1, x->tt);
+        t_signal_ref *ref = mapper_signal_user_data(*psig);
+        int len = mapper_signal_length(*psig);
+        float v[len];
+        for (i = 0; i < len; i++) {
+            v[i] = atom_getfloat(argv + ref->offset + i);
         }
+        mapper_signal_update(*psig, v, 1, x->tt);
+
+        psig = mapper_signal_query_next(psig);
     }
-    mdev_send_queue(x->device, x->tt);
+    mapper_device_send_queue(x->device, x->tt);
     outlet_anything(x->outlet2, gensym("out"), argc, argv);
 }
 
 // *********************************************************
 // -(input handler)-----------------------------------------
-void impmap_input_handler(mapper_signal sig, mapper_db_signal props,
-                               int instance_id, void *value, int count,
-                               mapper_timetag_t *time)
+void impmap_on_input(mapper_signal sig, mapper_id instance, const void *value,
+                     int count, mapper_timetag_t *time)
 {
-    t_signal_ref *ref = props->user_data;
+    t_signal_ref *ref = mapper_signal_user_data(sig);
+    if (!ref) {
+        post("implicitmap: no user data for signal '%s' in on_input()",
+             mapper_signal_name(sig));
+    }
     impmap *x = ref->x;
 
-    int j;
-    for (j=0; j < props->length; j++) {
-        if (ref->offset+j >= MAX_LIST) {
-            post("mapper: Maximum vector length exceeded!");
+    int i, len = mapper_signal_length(sig);
+    float *valf = (float*)value;
+    for (i = 0; i < len; i++) {
+        if (ref->offset + i >= MAX_LIST) {
+            post("implicitmap: Maximum vector length exceeded!");
             break;
         }
-        if (!value) {
-            maxpd_atom_set_float(x->buffer_in+ref->offset+j, 0);
-        }
-        else if (props->type == 'f') {
-            float *f = value;
-            maxpd_atom_set_float(x->buffer_in+ref->offset+j, f[j]);
-        }
-        else if (props->type == 'i') {
-            int *i = value;
-            maxpd_atom_set_float(x->buffer_in+ref->offset+j, (float)i[j]);
-        }
+        maxpd_atom_set_float(x->buffer_in + ref->offset + i, valf ? valf[i] : 0);
     }
     x->new_in = 1;
 }
 
 // *********************************************************
 // -(query handler)-----------------------------------------
-void impmap_query_handler(mapper_signal sig, mapper_db_signal props,
-                               int instance_id, void *value, int count,
-                               mapper_timetag_t *time)
+void impmap_on_query(mapper_signal sig, mapper_id instance, const void *value,
+                     int count, mapper_timetag_t *time)
 {
-    t_signal_ref *ref = props->user_data;
+    t_signal_ref *ref = mapper_signal_user_data(sig);
+    if (!ref) {
+        post("implicitmap: no user data for signal '%s' in on_input()",
+             mapper_signal_name(sig));
+    }
     impmap *x = ref->x;
-    if (!x)
-        post("pointer problem! %i", x);
 
-    int j;
-    for (j = 0; j < props->length; j++) {
-        if (ref->offset+j >= MAX_LIST) {
+    int i, len = mapper_signal_length(sig);
+    float *valf = (float*)value;
+    for (i = 0; i < len; i++) {
+        if (ref->offset + i >= MAX_LIST) {
             post("mapper: Maximum vector length exceeded!");
             break;
         }
-        if (!value)
-            continue;
-        else if (props->type == 'f') {
-            float *f = value;
-            x->snapshots->outputs[ref->offset+j] = f[j];
-        }
-        else if (props->type == 'i') {
-            int *i = value;
-            x->snapshots->outputs[ref->offset+j] = (float)i[j];
-        }
+        if (valf)
+            x->snapshots->outputs[ref->offset + i] = valf[i];
     }
 
     x->query_count --;
@@ -588,33 +558,11 @@ void impmap_query_handler(mapper_signal sig, mapper_db_signal props,
 }
 
 // *********************************************************
-// -(link handler)------------------------------------------
-void impmap_link_handler(mapper_db_link lnk, mapper_db_action_t a, void *user_data)
-{
-    // do not allow self-links
-    impmap *x = user_data;
-    if (!x) {
-        post("error in connect handler: user_data is NULL");
-        return;
-    }
-    if (!x->ready) {
-        post("error in connect handler: device not ready");
-        return;
-    }
-    if (a == MDB_NEW) {
-        if (strcmp(lnk->src_name, mdev_name(x->device)) == 0 &&
-            strcmp(lnk->dest_name, mdev_name(x->device)) == 0) {
-            mapper_monitor_unlink(x->monitor, lnk->src_name, lnk->dest_name);
-        }
-    }
-}
-
-// *********************************************************
 // -(connection handler)------------------------------------
-void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void *user)
+void impmap_on_map(mapper_device dev, mapper_map map, mapper_record_event e)
 {
     // if connected involves current generic signal, create a new generic signal
-    impmap *x = user;
+    impmap *x = (void*)mapper_device_user_data(dev);
     if (!x) {
         post("error in connect handler: user_data is NULL");
         return;
@@ -623,125 +571,212 @@ void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
         post("error in connect handler: device not ready");
         return;
     }
-    const char *signal_name = 0;
-    switch (a) {
-        case MDB_NEW: {
-            // check if applies to me
-            if (!osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name)) {
-                if (strcmp(signal_name, con->dest_name) == 0)
-                    return;
-                if (mdev_num_outputs(x->device) >= MAX_LIST) {
-                    post("Max outputs reached!");
-                    return;
-                }
-                // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, con->src_name, con->dest_name);
 
-                // add a matching output signal
-                mapper_signal msig;
-                char str[256];
-                int length = con->dest_length ? : 1;
-                float min = (con->range.known & CONNECTION_RANGE_DEST_MIN) ?
-                            (float)con->range.dest_min : 0.0f;
-                float max = (con->range.known & CONNECTION_RANGE_DEST_MAX) ?
-                            (float)con->range.dest_max : 1.0f;
-                msig = mdev_add_output(x->device, con->dest_name, length, 'f', 0,
-                                       &min, &max);
-                if (!msig) {
-                    post("msig doesn't exist!");
-                    return;
-                }
-                msig_set_callback(msig, impmap_query_handler, 0);
-                // connect the new signal
-                msig_full_name(msig, str, 256);
-                mapper_db_connection_t props;
-                props.mode = MO_BYPASS;
-                mapper_monitor_connect(x->monitor, str, con->dest_name, &props, CONNECTION_MODE);
+    // retrieve devices and signals
+    mapper_slot slot = mapper_map_slot(map, MAPPER_LOC_SOURCE, 0);
+    mapper_signal src_sig = mapper_slot_signal(slot);
+    mapper_device src_dev = mapper_signal_device(src_sig);
+    slot = mapper_map_slot(map, MAPPER_LOC_DESTINATION, 0);
+    mapper_signal dst_sig = mapper_slot_signal(slot);
+    mapper_device dst_dev = mapper_signal_device(dst_sig);
 
-                impmap_update_output_vector_positions(x);
+    // sanity check: don't allow self-connections
+    if (src_dev == dst_dev) {
+        mapper_map_release(map);
+        return;
+    }
 
-                //output numOutputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
-                outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
+    char full_name[256];
+
+    if (e == MAPPER_ADDED) {
+        if (src_dev == x->device) {
+            snprintf(full_name, 256, "%s/%s", mapper_device_name(dst_dev),
+                     mapper_signal_name(dst_sig));
+            if (strcmp(mapper_signal_name(src_sig), full_name) == 0) {
+                // <thisDev>:<dstDevName>/<dstSigName> -> <dstDev>:<dstSigName>
+                return;
             }
-            else if (!osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name)) {
-                if (strcmp(signal_name, con->src_name) == 0)
-                    return;
-                if (mdev_num_inputs(x->device) >= MAX_LIST) {
-                    post("Max inputs reached!");
-                    return;
-                }
-                // disconnect the generic signal
-                mapper_monitor_disconnect(x->monitor, con->src_name, con->dest_name);
-
-                // create a matching input signal
-                mapper_signal msig;
-                char str[256];
-                int length = con->src_length ? : 1;
-                float min = (con->range.known & CONNECTION_RANGE_SRC_MIN) ?
-                            (float)con->range.src_min : 0.0f;
-                float max = (con->range.known & CONNECTION_RANGE_SRC_MAX) ?
-                            (float)con->range.src_max : 1.0f;
-                msig = mdev_add_input(x->device, con->src_name, length, 'f', 0,
-                                      &min, &max, impmap_input_handler, 0);
-                if (!msig)
-                    return;
-                // connect the new signal
-                mapper_db_connection_t props;
-                props.mode = MO_BYPASS;
-                msig_full_name(msig, str, 256);
-                mapper_monitor_connect(x->monitor, con->src_name, str, &props, CONNECTION_MODE);
-
-                impmap_update_input_vector_positions(x);
-
-                //output numInputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
-                outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
+            if (mapper_device_num_signals(x->device, MAPPER_DIR_OUTGOING) >= MAX_LIST) {
+                post("Max outputs reached!");
+                return;
             }
-            break;
+            // unmap the generic signal
+            mapper_map_release(map);
+
+            // add a matching output signal
+            int i, length = mapper_signal_length(dst_sig);
+            char type = mapper_signal_type(dst_sig);
+            void *min = mapper_signal_minimum(dst_sig);
+            void *max = mapper_signal_maximum(dst_sig);
+
+            float *minf = 0, *maxf = 0;
+            if (type == 'f') {
+                minf = (float*)min;
+                maxf = (float*)max;
+            }
+            else {
+                if (min) {
+                    minf = alloca(length * sizeof(float));
+                    if (type == 'i') {
+                        int *mini = (int*)min;
+                        for (i = 0; i < length; i++)
+                            minf[i] = (float)mini[i];
+                    }
+                    else if (type == 'd') {
+                        double *mind = (double*)min;
+                        for (i = 0; i < length; i++)
+                            minf[i] = (float)mind[i];
+                    }
+                    else
+                        minf = 0;
+                }
+                if (max) {
+                    maxf = alloca(length * sizeof(float));
+                    if (type == 'i') {
+                        int *maxi = (int*)max;
+                        for (i = 0; i < length; i++)
+                            maxf[i] = (float)maxi[i];
+                    }
+                    else if (type == 'd') {
+                        double *maxd = (double*)max;
+                        for (i = 0; i < length; i++)
+                            maxf[i] = (float)maxd[i];
+                    }
+                    else
+                        maxf = 0;
+                }
+            }
+            src_sig = mapper_device_add_output_signal(x->device, full_name,
+                                                      length, 'f', 0, minf, maxf);
+            if (!src_sig) {
+                post("error creating new source signal!");
+                return;
+            }
+            mapper_signal_set_callback(src_sig, impmap_on_query);
+
+            // map the new signal
+            map = mapper_map_new(1, &src_sig, 1, &dst_sig);
+            mapper_map_set_mode(map, MAPPER_MODE_EXPRESSION);
+            mapper_map_set_expression(map, "y=x");
+            mapper_map_push(map);
+
+            impmap_update_output_vector_positions(x);
+
+            //output numOutputs
+            maxpd_atom_set_int(&x->msg_buffer,
+                               mapper_device_num_signals(x->device, MAPPER_DIR_OUTGOING) - 1);
+            outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
         }
-        case MDB_MODIFY:
-            break;
-        case MDB_REMOVE: {
-            mapper_signal msig;
-            // check if applies to me
-            if (!(osc_prefix_cmp(con->dest_name, mdev_name(x->device), &signal_name))) {
-                if (strcmp(signal_name, "/CONNECT_HERE") == 0)
-                    return;
-                if (strcmp(signal_name, con->src_name) != 0)
-                    return;
-                // find corresponding signal
-                if (!(msig = mdev_get_input_by_name(x->device, signal_name, 0))) {
-                    post("error: input signal %s not found!", signal_name);
-                    return;
+        else if (dst_dev == x->device) {
+            snprintf(full_name, 256, "%s/%s", mapper_device_name(src_dev),
+                     mapper_signal_name(src_sig));
+            if (strcmp(mapper_signal_name(dst_sig), full_name) == 0) {
+                // <srcDevName>:<srcSigName> -> <thisDev>:<srcDevName>/<srcSigName>
+                return;
+            }
+            if (mapper_device_num_signals(x->device, MAPPER_DIR_INCOMING) >= MAX_LIST) {
+                post("Max inputs reached!");
+                return;
+            }
+            // unmap the generic signal
+            mapper_map_release(map);
+
+            // add a matching input signal
+            int i, length = mapper_signal_length(src_sig);
+            char type = mapper_signal_type(src_sig);
+            void *min = mapper_signal_minimum(src_sig);
+            void *max = mapper_signal_maximum(src_sig);
+
+            float *minf = 0, *maxf = 0;
+            if (type == 'f') {
+                minf = (float*)min;
+                maxf = (float*)max;
+            }
+            else {
+                if (min) {
+                    minf = alloca(length * sizeof(float));
+                    if (type == 'i') {
+                        int *mini = (int*)min;
+                        for (i = 0; i < length; i++)
+                        minf[i] = (float)mini[i];
+                    }
+                    else if (type == 'd') {
+                        double *mind = (double*)min;
+                        for (i = 0; i < length; i++)
+                        minf[i] = (float)mind[i];
+                    }
+                    else
+                        minf = 0;
                 }
-                // remove it
-                mdev_remove_input(x->device, msig);
-                impmap_update_input_vector_positions(x);
-
-                //output numInputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_inputs(x->device) - 1);
-                outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
+                if (max) {
+                    maxf = alloca(length * sizeof(float));
+                    if (type == 'i') {
+                        int *maxi = (int*)max;
+                        for (i = 0; i < length; i++)
+                        maxf[i] = (float)maxi[i];
+                    }
+                    else if (type == 'd') {
+                        double *maxd = (double*)max;
+                        for (i = 0; i < length; i++)
+                        maxf[i] = (float)maxd[i];
+                    }
+                    else
+                        maxf = 0;
+                }
             }
-            else if (!(osc_prefix_cmp(con->src_name, mdev_name(x->device), &signal_name))) {
-                if (strcmp(signal_name, "/CONNECT_HERE") == 0)
-                    return;
-                if (strcmp(signal_name, con->dest_name) != 0)
-                    return;
-                // find corresponding signal
-                if (!(msig = mdev_get_output_by_name(x->device, signal_name, 0))) {
-                    post("error: output signal %s not found", signal_name);
-                    return;
-                }                
-                // remove it
-                mdev_remove_output(x->device, msig);
-                impmap_update_output_vector_positions(x);
-
-                //output numOutputs
-                maxpd_atom_set_int(&x->msg_buffer, mdev_num_outputs(x->device) - 1);
-                outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
+            dst_sig = mapper_device_add_input_signal(x->device, full_name,
+                                                     length, 'f', 0, minf, maxf,
+                                                     impmap_on_input, 0);
+            if (!dst_sig) {
+                post("error creating new destination signal!");
+                return;
             }
-            break;
+
+            // map the new signal
+            map = mapper_map_new(1, &src_sig, 1, &dst_sig);
+            mapper_map_set_mode(map, MAPPER_MODE_EXPRESSION);
+            mapper_map_set_expression(map, "y=x");
+            mapper_map_push(map);
+
+            impmap_update_input_vector_positions(x);
+
+            //output numInputs
+            maxpd_atom_set_int(&x->msg_buffer,
+                               mapper_device_num_signals(x->device, MAPPER_DIR_INCOMING) - 1);
+            outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
+        }
+    }
+    else if (e == MAPPER_REMOVED) {
+        if (src_sig == x->dummy_input || src_sig == x->dummy_output
+            || dst_sig == x->dummy_input || dst_sig == x->dummy_output)
+            return;
+        if (src_dev == x->device) {
+            snprintf(full_name, 256, "%s/%s", mapper_device_name(dst_dev),
+                     mapper_signal_name(dst_sig));
+            if (strcmp(mapper_signal_name(src_sig), full_name) != 0)
+                return;
+            // remove signal
+            mapper_device_remove_signal(x->device, src_sig);
+            impmap_update_input_vector_positions(x);
+
+            //output numOutputs
+            maxpd_atom_set_int(&x->msg_buffer,
+                               mapper_device_num_signals(x->device, MAPPER_DIR_OUTGOING) - 1);
+            outlet_anything(x->outlet3, gensym("numOutputs"), 1, &x->msg_buffer);
+        }
+        else if (dst_dev == x->device) {
+            snprintf(full_name, 256, "%s/%s", mapper_device_name(src_dev),
+                     mapper_signal_name(src_sig));
+            if (strcmp(mapper_signal_name(dst_sig), full_name) != 0)
+                return;
+            // remove signal
+            mapper_device_remove_signal(x->device, dst_sig);
+            impmap_update_input_vector_positions(x);
+
+            //output numInputs
+            maxpd_atom_set_int(&x->msg_buffer,
+                               mapper_device_num_signals(x->device, MAPPER_DIR_INCOMING) - 1);
+            outlet_anything(x->outlet3, gensym("numInputs"), 1, &x->msg_buffer);
         }
     }
 }
@@ -750,9 +785,8 @@ void impmap_connect_handler(mapper_db_connection con, mapper_db_action_t a, void
 // -(compare signal names for qsort)------------------------
 int compare_signal_names(const void *l, const void *r)
 {
-    mapper_db_signal l_props = msig_properties(*(mapper_signal*)l);
-    mapper_db_signal r_props = msig_properties(*(mapper_signal*)r);
-    return strcmp(l_props->name, r_props->name);
+    return strcmp(mapper_signal_name(*(mapper_signal*)l),
+                  mapper_signal_name(*(mapper_signal*)r));
 }
 
 // *********************************************************
@@ -760,24 +794,27 @@ int compare_signal_names(const void *l, const void *r)
 void impmap_update_input_vector_positions(impmap *x)
 {
     int i, k=0, count;
+    int num_inputs = mapper_device_num_signals(x->device, MAPPER_DIR_INCOMING) - 1;
 
     // store input signal pointers
-    mapper_signal signals[mdev_num_inputs(x->device) - 1];
-    mapper_signal *psig = mdev_get_inputs(x->device);
-    // start counting at index 1 to ignore signal "/CONNECT_HERE"
-    for (i = 1; i < mdev_num_inputs(x->device); i++) {
-        signals[i-1] = psig[i];
+    mapper_signal signals[num_inputs];
+    mapper_signal *psig = mapper_device_signals(x->device, MAPPER_DIR_INCOMING);
+
+    i = 0;
+    while (psig) {
+        if (*psig != x->dummy_input)
+            signals[i++] = *psig;
+        psig = mapper_signal_query_next(psig);
     }
 
     // sort input signal pointer array
-    qsort(signals, mdev_num_inputs(x->device) - 1, sizeof(mapper_signal), compare_signal_names);
+    qsort(signals, num_inputs, sizeof(mapper_signal), compare_signal_names);
 
     // set offsets and user_data
-    for (i = 0; i < mdev_num_inputs(x->device) - 1; i++) {
-        mapper_db_signal props = msig_properties(signals[i]);
+    for (i = 0; i < num_inputs; i++) {
         x->signals_in[i].offset = k;
-        props->user_data = &x->signals_in[i];
-        k += props->length;
+        mapper_signal_set_user_data(signals[i], &x->signals_in[i]);
+        k += mapper_signal_length(signals[i]);
     }
     count = k < MAX_LIST ? k : MAX_LIST;
     if (count != x->size_in && x->num_snapshots) {
@@ -792,24 +829,27 @@ void impmap_update_input_vector_positions(impmap *x)
 void impmap_update_output_vector_positions(impmap *x)
 {
     int i, k=0, count;
+    int num_outputs = mapper_device_num_signals(x->device, MAPPER_DIR_OUTGOING) - 1;
 
     // store output signal pointers
-    mapper_signal signals[mdev_num_outputs(x->device) - 1];
-    mapper_signal *psig = mdev_get_outputs(x->device);
-    // start counting at index 1 to ignore signal "/CONNECT_HERE"
-    for (i = 1; i < mdev_num_outputs(x->device); i++) {
-        signals[i-1] = psig[i];
+    mapper_signal signals[num_outputs];
+    mapper_signal *psig = mapper_device_signals(x->device, MAPPER_DIR_OUTGOING);
+
+    i = 0;
+    while (psig) {
+        if (*psig != x->dummy_output)
+            signals[i++] = *psig;
+        psig = mapper_signal_query_next(psig);
     }
 
     // sort output signal pointer array
-    qsort(signals, mdev_num_outputs(x->device) - 1, sizeof(mapper_signal), compare_signal_names);
+    qsort(signals, num_outputs, sizeof(mapper_signal), compare_signal_names);
 
     // set offsets and user_data
-    for (i = 0; i < mdev_num_outputs(x->device) - 1; i++) {
-        mapper_db_signal props = msig_properties(signals[i]);
+    for (i = 0; i < num_outputs; i++) {
         x->signals_out[i].offset = k;
-        props->user_data = &x->signals_out[i];
-        k += props->length;
+        mapper_signal_set_user_data(signals[i], &x->signals_out[i]);
+        k += mapper_signal_length(signals[i]);
     }
     count = k < MAX_LIST ? k : MAX_LIST;
     if (count != x->size_out && x->num_snapshots) {
@@ -824,26 +864,14 @@ void impmap_update_output_vector_positions(impmap *x)
 int impmap_setup_mapper(impmap *x, const char *iface)
 {
     post("using name: %s", x->name);
-    x->admin = 0;
     x->device = 0;
-    x->monitor = 0;
-    x->db = 0;
 
-    x->admin = mapper_admin_new(iface, 0, 0);
-    if (!x->admin)
-        return 1;
-
-    x->device = mdev_new(x->name, port, x->admin);
+    x->device = mapper_device_new(x->name, port, 0);
     if (!x->device)
         return 1;
 
-    x->monitor = mapper_monitor_new(x->admin, 0);
-    if (!x->monitor)
-        return 1;
-
-    x->db = mapper_monitor_get_db(x->monitor);
-    mapper_db_add_link_callback(x->db, impmap_link_handler, x);
-    mapper_db_add_connection_callback(x->db, impmap_connect_handler, x);
+    mapper_device_set_user_data(x->device, x);
+    mapper_device_set_map_callback(x->device, impmap_on_map);
 
     impmap_print_properties(x);
 
@@ -854,17 +882,20 @@ int impmap_setup_mapper(impmap *x, const char *iface)
 // -(poll libmapper)----------------------------------------
 void impmap_poll(impmap *x)
 {
-    mdev_poll(x->device, 0);
-    mapper_monitor_poll(x->monitor, 0);
+    mapper_device_poll(x->device, 0);
     if (!x->ready) {
-        if (mdev_ready(x->device)) {
+        if (mapper_device_ready(x->device)) {
             x->ready = 1;
 
             // create a new generic output signal
-            mdev_add_output(x->device, "/CONNECT_HERE", 1, 'f', 0, 0, 0);
+            x->dummy_output = mapper_device_add_output_signal(x->device,
+                                                              "CONNECT_TO_DESTINATION",
+                                                              1, 'f', 0, 0, 0);
 
             // create a new generic input signal
-            mdev_add_input(x->device, "/CONNECT_HERE", 1, 'f', 0, 0, 0, 0, x);
+            x->dummy_input = mapper_device_add_input_signal(x->device,
+                                                            "CONNECT_TO_SOURCE",
+                                                            1, 'f', 0, 0, 0, 0, x);
 
             impmap_print_properties(x);
         }
@@ -947,33 +978,4 @@ void maxpd_atom_set_float_array(t_atom *a, float *d, int length)
         SETFLOAT(a+i, d[i]);
     }
 #endif
-}
-
-/* Helper function to check if the OSC prefix matches.  Like strcmp(),
- * returns 0 if they match (up to the second '/'), non-0 otherwise.
- * Also optionally returns a pointer to the remainder of str1 after
- * the prefix. */
-static int osc_prefix_cmp(const char *str1, const char *str2,
-                          const char **rest)
-{
-    if (str1[0]!='/') {
-        return 0;
-    }
-    if (str2[0]!='/') {
-        return 0;
-    }
-
-    // skip first slash
-    const char *s1=str1+1, *s2=str2+1;
-
-    while (*s1 && (*s1)!='/') s1++;
-    while (*s2 && (*s2)!='/') s2++;
-
-    int n1 = s1-str1, n2 = s2-str2;
-    if (n1!=n2) return 1;
-
-    if (rest)
-        *rest = s1;
-
-    return strncmp(str1, str2, n1);
 }
